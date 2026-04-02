@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新竹縣下水道科 GIS 系統演練 — 標準作業程序</title>
+<style>
+  html { font-size: 20px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    background: #0a0e1a;
+    color: #e2e8f0;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    background: linear-gradient(90deg, #0f172a, #1e293b);
+    border-bottom: 1px solid #334155;
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .header-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #38bdf8;
+    letter-spacing: 0.05em;
+  }
+  .header-sub {
+    font-size: 1rem;
+    color: #94a3b8;
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+  }
+  .clock {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ─── Rain overlay bar ─── */
+  .rain-bar {
+    height: 4px;
+    background: #1e293b;
+    flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .rain-bar-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 1s ease, background 1s ease;
+  }
+
+  /* ─── Main 3-column layout ─── */
+  .main {
+    display: grid;
+    grid-template-columns: 260px 1fr 300px;
+    gap: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ─── Left: Phase navigator ─── */
+  .phase-nav {
+    background: #0f172a;
+    border-right: 1px solid #1e293b;
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+  }
+  .phase-card {
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .phase-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
+  }
+  .phase-card.phase-0::before { background: #22c55e; }
+  .phase-card.phase-1::before { background: #f59e0b; }
+  .phase-card.phase-2::before { background: #ef4444; }
+  .phase-card.phase-3::before { background: #6366f1; }
+  .phase-card.active {
+    background: #1a2a42;
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 1px rgba(56,189,248,0.15);
+  }
+  .phase-badge {
+    font-size: 0.55rem;
+    color: #64748b;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  .phase-badge .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .phase-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .phase-time {
+    font-size: 0.62rem;
+    color: #94a3b8;
+    margin-bottom: 4px;
+  }
+  .phase-desc {
+    font-size: 0.68rem;
+    color: #64748b;
+    line-height: 1.35;
+    margin-bottom: 6px;
+  }
+  .phase-progress-bar {
+    height: 2px;
+    background: #1e293b;
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .phase-progress-fill {
+    height: 100%;
+    background: #38bdf8;
+    transition: width 0.4s;
+  }
+  .phase-card.done .phase-progress-fill { background: #22c55e; }
+  .phase-card.active .phase-progress-fill { background: #38bdf8; }
+
+  /* ─── Map area ─── */
+  .map-area {
+    background: #0d1520;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .map-canvas {
+    width: 100%;
+    height: 100%;
+    user-select: none;
+  }
+  .map-overlay {
+    position: absolute;
+    bottom: 12px; left: 12px;
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+  }
+  .map-tag {
+    font-size: 0.62rem;
+    padding: 4px 9px;
+    border: 1px solid;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+    user-select: none;
+    backdrop-filter: blur(4px);
+  }
+  .map-tag.on { opacity: 1; }
+  .map-tag.off { opacity: 0.4; }
+  .gis-cursor {
+    position: absolute;
+    width: 22px; height: 22px;
+    pointer-events: none;
+    z-index: 5;
+    transition: all 0.4s ease;
+  }
+  .gis-cursor svg { width: 100%; height: 100%; }
+  .click-ripple {
+    position: absolute;
+    width: 60px; height: 60px;
+    border: 2px solid #38bdf8;
+    border-radius: 50%;
+    pointer-events: none;
+    display: none;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+  }
+  @keyframes ripple {
+    0% { width:60px; height:60px; opacity:1; }
+    100% { width:200px; height:200px; opacity:0; }
+  }
+  .alert-bubble {
+    position: absolute;
+    background: rgba(59,130,246,0.95);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.68rem;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(59,130,246,0.6);
+    display: none;
+    max-width: 140px;
+    z-index: 20;
+    animation: slideIn 0.3s ease;
+  }
+  .alert-bubble.warn {
+    background: rgba(245,158,11,0.95);
+    border-color: rgba(245,158,11,0.6);
+  }
+  .alert-bubble.success {
+    background: rgba(34,197,94,0.95);
+    border-color: rgba(34,197,94,0.6);
+  }
+  .alert-bubble.info {
+    background: rgba(56,189,248,0.95);
+    border-color: rgba(56,189,248,0.6);
+  }
+  @keyframes slideIn {
+    from { opacity:0; transform:translateX(20px); }
+    to { opacity:1; transform:translateX(0); }
+  }
+  .map-phase-label {
+    position: absolute;
+    top: 12px; left: 12px;
+    background: rgba(15,23,42,0.92);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: #94a3b8;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+  }
+  .map-phase-label strong {
+    display: block;
+    font-size: 0.85rem;
+    color: #38bdf8;
+    margin-bottom: 3px;
+  }
+
+  /* ─── Right wrapper & panels ─── */
+  .right-panel {
+    display: flex;
+    flex-direction: column;
+    background: #0f172a;
+    border-left: 1px solid #1e293b;
+    overflow: hidden;
+  }
+
+  /* ─── Situation Board (top half) ─── */
+  .situation-panel {
+    flex: 0 0 45%;
+    display: flex;
+    flex-direction: column;
+    border-bottom: 2px solid #334155;
+    overflow: hidden;
+  }
+  .situation-header {
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    background: rgba(15,23,42,0.8);
+  }
+  .situation-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .situ-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 9px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 5px;
+    border-left: 3px solid #1e293b;
+    gap: 6px;
+    transition: border-left-color 0.4s;
+  }
+  .situ-row.ok     { border-left-color: #22c55e; background: rgba(34,197,94,0.05); }
+  .situ-row.warn   { border-left-color: #f59e0b; background: rgba(245,158,11,0.05); }
+  .situ-row.danger { border-left-color: #ef4444; background: rgba(239,68,68,0.07); animation: situ-pulse 1.5s ease infinite; }
+  .situ-row.info   { border-left-color: #38bdf8; background: rgba(56,189,248,0.05); }
+  .situ-row.muted  { border-left-color: #334155; }
+  @keyframes situ-pulse {
+    0%,100% { background: rgba(239,68,68,0.07); }
+    50%     { background: rgba(239,68,68,0.14); }
+  }
+  .situ-label { font-size: 0.63rem; color: #64748b; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .situ-value { font-size: 0.67rem; font-weight: 700; text-align: right; }
+  .situ-value.ok     { color: #4ade80; }
+  .situ-value.warn   { color: #fbbf24; }
+  .situ-value.danger { color: #f87171; }
+  .situ-value.info   { color: #38bdf8; }
+  .situ-value.muted  { color: #475569; }
+
+  /* ─── Checklist panel (bottom half) ─── */
+  .checklist-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .checklist-header {
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .checklist-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    letter-spacing: 0.02em;
+  }
+  .checklist-phase-name {
+    font-size: 0.75rem;
+    color: #38bdf8;
+    font-weight: 600;
+  }
+  .checklist-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .checklist-section {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .checklist-section-title {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-bottom: 3px;
+    border-bottom: 1px solid #1e293b;
+    margin-bottom: 2px;
+  }
+  .checklist-item {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 5px 7px;
+    border-radius: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+    transition: background 0.2s;
+  }
+  .checklist-item:hover { background: rgba(255,255,255,0.04); }
+  .item-badge {
+    font-size: 0.55rem;
+    padding: 2px 5px;
+    border-radius: 2px;
+    font-weight: 700;
+    flex-shrink: 0;
+    text-align: center;
+    border: 1px solid;
+  }
+  .badge-todo        { background: #1e293b; color: #94a3b8; border-color: #334155; }
+  .badge-doing       { background: rgba(56,189,248,0.15); color: #38bdf8; border-color: rgba(56,189,248,0.4); }
+  .badge-done        { background: rgba(34,197,94,0.15); color: #22c55e; border-color: rgba(34,197,94,0.4); }
+  .badge-urgent      { background: rgba(239,68,68,0.2); color: #f87171; border-color: rgba(239,68,68,0.5); animation: pulse-urgent 2s ease-in-out infinite; }
+  @keyframes pulse-urgent {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.7; }
+  }
+  .item-text {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+  .item-text.done-text {
+    color: #64748b;
+  }
+  .item-text.urgent-text {
+    color: #f87171;
+  }
+  .item-subtext {
+    font-size: 0.6rem;
+    color: #64748b;
+    margin-top: 2px;
+  }
+
+  /* ─── Controls ─── */
+  .controls {
+    background: #0f172a;
+    border-top: 1px solid #1e293b;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .ctrl-btn {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #94a3b8;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    font-weight: 600;
+  }
+  .ctrl-btn:hover {
+    background: #334155;
+    color: #e2e8f0;
+  }
+  .ctrl-btn.primary {
+    background: #0369a1;
+    border-color: #0284c7;
+    color: white;
+  }
+  .ctrl-btn.primary:hover {
+    background: #0284c7;
+  }
+  .progress-track {
+    flex: 1;
+    height: 8px;
+    background: #1e293b;
+    border-radius: 4px;
+    position: relative;
+    cursor: pointer;
+  }
+  .progress-fill {
+    height: 100%;
+    background: #38bdf8;
+    border-radius: 4px;
+    transition: width 0.4s;
+  }
+  .step-indicators {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .step-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #1e293b;
+    transition: all 0.3s;
+    cursor: pointer;
+  }
+  .step-dot.active { background: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
+  .step-dot.done { background: #334155; }
+  .auto-btn {
+    font-size: 0.7rem;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .auto-toggle {
+    width: 28px; height: 15px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .auto-toggle.on { background: #0369a1; border-color: #0284c7; }
+  .auto-toggle::after {
+    content: '';
+    position: absolute;
+    width: 11px; height: 11px;
+    background: white;
+    border-radius: 50%;
+    top: 1px; left: 1px;
+    transition: left 0.2s;
+  }
+  .auto-toggle.on::after { left: 14px; }
+
+  /* ─── Night Mode toggle button ─── */
+  .night-btn {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #94a3b8;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    margin-left: 12px;
+  }
+  .night-btn:hover { background: #334155; color: #e2e8f0; }
+  body.night .night-btn { background: #2a1000; border-color: #7c3a00; color: #f59e0b; }
+
+  /* ─── Night Mode overrides ─── */
+  body.night {
+    background: #080508;
+    color: #d4a870;
+    transition: background 0.4s, color 0.4s;
+  }
+  body.night .header {
+    background: linear-gradient(90deg, #0e0808, #1a0f0a);
+    border-bottom-color: #2a1500;
+  }
+  body.night .header-title { color: #e07020; }
+  body.night .header-sub   { color: #7a5030; }
+  body.night .clock        { color: #7a5030; }
+
+  body.night .phase-nav {
+    background: #0a0508;
+    border-right-color: #1e1008;
+  }
+  body.night .phase-card {
+    border-color: #1e1008;
+  }
+  body.night .phase-card.active {
+    background: #180e08;
+    border-color: #2a1a08;
+    box-shadow: 0 0 0 1px rgba(224,112,32,0.15);
+  }
+  body.night .phase-time  { color: #4a3020; }
+  body.night .phase-desc  { color: #6a4a28; }
+  body.night .phase-progress-bar { background: #1e1008; }
+
+  body.night .map-area    { background: #060408; }
+  body.night .map-phase-label {
+    background: rgba(10,5,8,0.92);
+    border-color: #2a1500;
+    color: #7a5030;
+  }
+  body.night .map-phase-label strong { color: #d4a870; }
+  body.night .click-ripple { border-color: #e07020; }
+  body.night .step-dot.active { background: #e07020; box-shadow: 0 0 6px #e07020; }
+
+  body.night .situation-panel  { border-bottom-color: #2a1500; }
+  body.night .situation-header { background: rgba(14,8,8,0.8); border-bottom-color: #1e1008; }
+  body.night .situ-row         { border-left-color: #2a1a08 !important; background: rgba(255,255,255,0.01) !important; }
+  body.night .situ-row.ok      { border-left-color: #2a5020 !important; }
+  body.night .situ-row.warn    { border-left-color: #5a3800 !important; }
+  body.night .situ-row.danger  { border-left-color: #5a1a08 !important; }
+  body.night .situ-label       { color: #4a3020; }
+  body.night .situ-value.ok    { color: #608050; }
+  body.night .situ-value.warn  { color: #a07030; }
+  body.night .situ-value.danger{ color: #a04030; }
+  body.night .situ-value.info  { color: #407080; }
+  body.night .situ-value.muted { color: #3a2818; }
+
+  body.night .right-panel {
+    background: #0a0508;
+    border-left-color: #1e1008;
+  }
+  body.night .checklist-header  { border-bottom-color: #1e1008; }
+  body.night .checklist-title   { color: #6a4a28; }
+  body.night .checklist-phase-name { color: #e07020; }
+  body.night .checklist-section-title {
+    color: #4a3020;
+    border-bottom-color: #1e1008;
+  }
+  body.night .checklist-item    { border-bottom-color: #0e0808; }
+  body.night .item-text         { color: #c49060; }
+  body.night .item-text.done-text { color: #3a2818; }
+  body.night .item-subtext      { color: #4a3020; }
+  body.night .badge-todo        { background: #1e1008; color: #4a3020; }
+  body.night .badge-doing       { background: rgba(224,112,32,0.15); color: #f09040; border-color: rgba(224,112,32,0.4); }
+  body.night .badge-done        { background: rgba(180,60,20,0.15); color: #e07050; }
+  body.night .badge-urgent      { background: rgba(200,30,10,0.2); color: #f06050; border-color: rgba(200,30,10,0.5); }
+
+  body.night .controls       { background: #0a0508; border-top-color: #1e1008; }
+  body.night .ctrl-btn       { background: #180e08; border-color: #2a1a08; color: #7a5030; }
+  body.night .ctrl-btn:hover { background: #2a1a08; color: #d4a870; }
+  body.night .ctrl-btn.primary { background: #7c2800; border-color: #a03200; }
+  body.night .ctrl-btn.primary:hover { background: #a03200; }
+  body.night .progress-track { background: #1e1008; }
+  body.night .step-dot       { background: #1e1008; }
+  body.night .step-dot.done  { background: #2a1a08; }
+  body.night .auto-toggle    { background: #1e1008; border-color: #2a1a08; }
+  body.night .auto-toggle.on { background: #7c2800; border-color: #a03200; }
+  body.night .auto-btn       { color: #4a3020; }
+  body.night .rain-bar       { background: #1e1008; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <div class="header-title">🗺 新竹縣下水道科 GIS 系統演練</div>
+    <div class="header-sub">標準作業程序 (SOP) — 平時監控 → 大雨預報 → 豪雨應變 → 災後復原</div>
+  </div>
+  <div style="display:flex;align-items:center;">
+    <div class="clock" id="clockEl"></div>
+    <button class="night-btn" id="nightBtn" onclick="toggleNight()">🌙 夜間模式</button>
+  </div>
+</div>
+
+<!-- Rain intensity bar -->
+<div class="rain-bar">
+  <div class="rain-bar-fill" id="rainBar"></div>
+</div>
+
+<!-- Main layout -->
+<div class="main">
+
+  <!-- Left: Phase nav -->
+  <div class="phase-nav">
+    <div style="font-size:0.62rem;color:#475569;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">演練階段</div>
+
+    <div class="phase-card phase-0" id="phaseCard0" onclick="goToPhase(0)">
+      <div class="phase-badge"><span class="dot"></span>PHASE 0</div>
+      <div class="phase-title">☀️ 平時監控</div>
+      <div class="phase-time">日常作業 | 非汛期</div>
+      <div class="phase-desc">建立基線、安排巡查、維護資料完整性</div>
+      <div class="phase-progress-bar"><div class="phase-progress-fill" id="prog0" style="width:0%"></div></div>
+    </div>
+
+    <div class="phase-card phase-1" id="phaseCard1" onclick="goToPhase(1)">
+      <div class="phase-badge"><span class="dot"></span>PHASE 1</div>
+      <div class="phase-title">🌧 大雨預報期</div>
+      <div class="phase-time">T-24h 起</div>
+      <div class="phase-desc">預先部署、確認熱點、通知巡查人員</div>
+      <div class="phase-progress-bar"><div class="phase-progress-fill" id="prog1" style="width:0%"></div></div>
+    </div>
+
+    <div class="phase-card phase-2" id="phaseCard2" onclick="goToPhase(2)">
+      <div class="phase-badge"><span class="dot"></span>PHASE 2</div>
+      <div class="phase-title">⛈ 豪雨應變</div>
+      <div class="phase-time">降雨期間</div>
+      <div class="phase-desc">即時監控、緊急調度、回報作業中心</div>
+      <div class="phase-progress-bar"><div class="phase-progress-fill" id="prog2" style="width:0%"></div></div>
+    </div>
+
+    <div class="phase-card phase-3" id="phaseCard3" onclick="goToPhase(3)">
+      <div class="phase-badge"><span class="dot"></span>PHASE 3</div>
+      <div class="phase-title">🔵 災後復原</div>
+      <div class="phase-time">雨停後 24h</div>
+      <div class="phase-desc">損壞通報、清淤確認、更新優先評分</div>
+      <div class="phase-progress-bar"><div class="phase-progress-fill" id="prog3" style="width:0%"></div></div>
+    </div>
+
+    <!-- Legend -->
+    <div style="margin-top:auto;padding-top:12px;border-top:1px solid #1e293b;">
+      <div style="font-size:0.62rem;color:#475569;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">圖例</div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <div style="display:flex;align-items:center;gap:6px;font-size:0.67rem;color:#94a3b8;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;flex-shrink:0;"></span> 高優先清淤管段
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:0.67rem;color:#94a3b8;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;flex-shrink:0;"></span> 中優先清淤管段
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:0.67rem;color:#94a3b8;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;flex-shrink:0;"></span> 積水歷史熱點
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:0.67rem;color:#94a3b8;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#06b6d4;flex-shrink:0;"></span> 潮汐/水位站
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Center: Map simulation -->
+  <div class="map-area" id="mapArea">
+    <svg class="map-canvas" id="mapSvg" viewBox="0 0 700 500" preserveAspectRatio="xMidYMid slice">
+      <!-- Base map — schematic of 竹北/竹東 area -->
+      <defs>
+        <radialGradient id="hotGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#ef4444" stop-opacity="0.6"/>
+          <stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>
+        </radialGradient>
+        <radialGradient id="warnGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.5"/>
+          <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="2" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glowStrong">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <!-- Scan line gradient -->
+        <linearGradient id="scanGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="transparent"/>
+          <stop offset="45%" stop-color="rgba(56,189,248,0.05)"/>
+          <stop offset="50%" stop-color="rgba(56,189,248,0.3)"/>
+          <stop offset="55%" stop-color="rgba(56,189,248,0.05)"/>
+          <stop offset="100%" stop-color="transparent"/>
+        </linearGradient>
+      </defs>
+
+      <!-- Background dark tiles -->
+      <rect width="700" height="500" fill="#0d1520"/>
+
+      <!-- Grid lines (subtle) -->
+      <g stroke="#1a2640" stroke-width="0.5" opacity="0.6">
+        <line x1="0" y1="100" x2="700" y2="100"/>
+        <line x1="0" y1="200" x2="700" y2="200"/>
+        <line x1="0" y1="300" x2="700" y2="300"/>
+        <line x1="0" y1="400" x2="700" y2="400"/>
+        <line x1="100" y1="0" x2="100" y2="500"/>
+        <line x1="200" y1="0" x2="200" y2="500"/>
+        <line x1="300" y1="0" x2="300" y2="500"/>
+        <line x1="400" y1="0" x2="400" y2="500"/>
+        <line x1="500" y1="0" x2="500" y2="500"/>
+        <line x1="600" y1="0" x2="600" y2="500"/>
+      </g>
+
+      <!-- Roads (schematic) -->
+      <g id="roadsLayer" stroke="#2d3f5c" stroke-width="2" fill="none" opacity="0.8">
+        <!-- Main roads -->
+        <line x1="0" y1="200" x2="700" y2="200"/>
+        <line x1="0" y1="350" x2="700" y2="340"/>
+        <line x1="150" y1="0" x2="160" y2="500"/>
+        <line x1="400" y1="0" x2="390" y2="500"/>
+        <line x1="550" y1="0" x2="545" y2="500"/>
+        <!-- Secondary roads -->
+        <line x1="0" y1="130" x2="700" y2="135" stroke-width="1"/>
+        <line x1="0" y1="270" x2="700" y2="265" stroke-width="1"/>
+        <line x1="0" y1="430" x2="700" y2="425" stroke-width="1"/>
+        <line x1="70" y1="0" x2="75" y2="500" stroke-width="1"/>
+        <line x1="260" y1="0" x2="255" y2="500" stroke-width="1"/>
+        <line x1="480" y1="0" x2="478" y2="500" stroke-width="1"/>
+        <line x1="640" y1="0" x2="638" y2="500" stroke-width="1"/>
+      </g>
+
+      <!-- Area labels -->
+      <g font-size="10" fill="#2d4a6b" font-weight="700" letter-spacing="0.05em">
+        <text x="80" y="170">竹北市</text>
+        <text x="280" y="160">竹北二期</text>
+        <text x="480" y="175">竹北一期</text>
+        <text x="80" y="390">竹東鎮</text>
+        <text x="300" y="380">竹東二期</text>
+        <text x="490" y="390">竹東台泥</text>
+      </g>
+
+      <!-- River (schematic) -->
+      <path d="M 200 0 Q 210 100 195 200 Q 185 300 200 400 Q 210 450 205 500"
+            stroke="#1a3a5c" stroke-width="8" fill="none" opacity="0.7"/>
+      <text x="170" y="250" font-size="8" fill="#1d4670" transform="rotate(-80,170,250)">頭前溪</text>
+
+      <!-- ── Pipe network ── -->
+      <g id="pipeLayer" opacity="0">
+        <line id="pipe-zd01" x1="318" y1="320" x2="325" y2="380" stroke="#ef4444" stroke-width="3.5" stroke-linecap="round" filter="url(#glow)"/>
+        <line id="pipe-zd02" x1="290" y1="350" x2="355" y2="348" stroke="#f97316" stroke-width="3" stroke-linecap="round" filter="url(#glow)"/>
+        <line id="pipe-zd03" x1="360" y1="310" x2="375" y2="365" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" filter="url(#glow)"/>
+        <line id="pipe-zd04" x1="410" y1="345" x2="415" y2="400" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"/>
+        <line id="pipe-zb02" x1="280" y1="155" x2="285" y2="210" stroke="#ef4444" stroke-width="3.5" stroke-linecap="round" filter="url(#glow)"/>
+        <line id="pipe-zb03" x1="500" y1="215" x2="555" y2="240" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+        <line id="pipe-zb04" x1="540" y1="230" x2="590" y2="255" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"/>
+        <line id="pipe-zb05" x1="450" y1="180" x2="452" y2="240" stroke="#f97316" stroke-width="3" stroke-linecap="round"/>
+        <g font-size="8.5" font-weight="700" fill="white" opacity="0.9">
+          <text x="297" y="352" fill="#ef4444">zd-01</text>
+          <text x="305" y="344" fill="#f97316">zd-02</text>
+          <text x="362" y="306" fill="#f59e0b">zd-03</text>
+          <text x="416" y="342" fill="#f59e0b">zd-04</text>
+          <text x="262" y="152" fill="#ef4444">zb-02</text>
+          <text x="488" y="213" fill="#f59e0b">zb-03</text>
+          <text x="540" y="226" fill="#f59e0b">zb-04</text>
+          <text x="432" y="178" fill="#f97316">zb-05</text>
+        </g>
+      </g>
+
+      <!-- ── Flood hotspot heatmap ── -->
+      <g id="heatLayer" opacity="0">
+        <circle cx="325" cy="355" r="38" fill="url(#hotGrad)"/>
+        <circle cx="285" cy="185" r="32" fill="url(#hotGrad)"/>
+        <circle cx="455" cy="190" r="28" fill="url(#warnGrad)"/>
+        <circle cx="390" cy="360" r="24" fill="url(#warnGrad)"/>
+        <circle cx="520" cy="240" r="22" fill="url(#warnGrad)"/>
+      </g>
+
+      <!-- ── Flood hotspot markers ── -->
+      <g id="hotspotLayer" opacity="0">
+        <circle cx="325" cy="355" r="9" fill="#ef4444" stroke="white" stroke-width="1.5"/>
+        <circle cx="285" cy="185" r="9" fill="#ef4444" stroke="white" stroke-width="1.5"/>
+        <circle cx="455" cy="190" r="7" fill="#f59e0b" stroke="white" stroke-width="1.5"/>
+        <circle cx="390" cy="360" r="7" fill="#f59e0b" stroke="white" stroke-width="1.5"/>
+        <circle cx="520" cy="240" r="6" fill="#f59e0b" stroke="white" stroke-width="1.5"/>
+        <circle cx="325" cy="355" r="9" fill="none" stroke="#ef4444" stroke-width="1" opacity="0.6">
+          <animate attributeName="r" values="9;22;9" dur="2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="285" cy="185" r="9" fill="none" stroke="#ef4444" stroke-width="1" opacity="0.6">
+          <animate attributeName="r" values="9;22;9" dur="2.3s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.8;0;0.8" dur="2.3s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+
+      <!-- ── Water Resources Agency gauges ── -->
+      <g id="tidalLayer" opacity="0">
+        <!-- Station 1 -->
+        <g transform="translate(190,120)">
+          <rect x="-28" y="-11" width="56" height="38" rx="4" fill="#0a1e30" stroke="#06b6d4" stroke-width="1.2" opacity="0.92"/>
+          <text x="0" y="-1" font-size="7.5" fill="#67e8f9" font-weight="700" text-anchor="middle">頭前溪竹北橋</text>
+          <text id="wlVal1" x="0" y="11" font-size="9" fill="#22d3ee" font-weight="700" text-anchor="middle"> 2.34 m </text>
+          <rect id="wlBg1" x="-14" y="15" width="28" height="9" rx="2" fill="#0e7490"/>
+          <text id="wlStat1" x="0" y="22" font-size="6.5" fill="white" text-anchor="middle">正常水位</text>
+          <polygon points="0,-16 5,-11 0,-6 -5,-11" fill="#06b6d4" stroke="white" stroke-width="1"/>
+        </g>
+        <rect x="164" y="100" width="8" height="44" rx="2" fill="#0d2535" stroke="#0e7490" stroke-width="0.8"/>
+        <line x1="163" y1="110" x2="174" y2="110" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,1"/>
+        <text x="175" y="113" font-size="5.5" fill="#f59e0b">警</text>
+        <rect id="waterBar1" x="165" y="124" width="6" height="20" rx="1" fill="#06b6d4" opacity="0.85">
+          <animate attributeName="height" values="20;28;22;18;20" dur="5s" repeatCount="indefinite"/>
+          <animate attributeName="y" values="124;116;122;126;124" dur="5s" repeatCount="indefinite"/>
+        </rect>
+
+        <!-- Station 2 -->
+        <g transform="translate(380,175)">
+          <rect x="-30" y="-11" width="60" height="38" rx="4" fill="#0a1e30" stroke="#06b6d4" stroke-width="1.2" opacity="0.92"/>
+          <text x="0" y="-1" font-size="7.5" fill="#67e8f9" font-weight="700" text-anchor="middle">頭前溪新竹大橋</text>
+          <text id="wlVal2" x="0" y="11" font-size="9" fill="#22d3ee" font-weight="700" text-anchor="middle"> 3.12 m </text>
+          <rect id="wlBg2" x="-14" y="15" width="28" height="9" rx="2" fill="#0e7490"/>
+          <text id="wlStat2" x="0" y="22" font-size="6.5" fill="white" text-anchor="middle">正常水位</text>
+          <polygon points="0,-16 5,-11 0,-6 -5,-11" fill="#06b6d4" stroke="white" stroke-width="1"/>
+        </g>
+        <rect x="354" y="155" width="8" height="44" rx="2" fill="#0d2535" stroke="#0e7490" stroke-width="0.8"/>
+        <line x1="353" y1="165" x2="364" y2="165" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,1"/>
+        <text x="365" y="168" font-size="5.5" fill="#f59e0b">警</text>
+        <rect id="waterBar2" x="355" y="178" width="6" height="21" rx="1" fill="#06b6d4" opacity="0.85">
+          <animate attributeName="height" values="21;30;24;19;21" dur="4.5s" repeatCount="indefinite"/>
+          <animate attributeName="y" values="178;169;175;180;178" dur="4.5s" repeatCount="indefinite"/>
+        </rect>
+
+        <!-- Station 3 -->
+        <g transform="translate(200,300)">
+          <rect x="-26" y="-11" width="52" height="38" rx="4" fill="#0a1e30" stroke="#06b6d4" stroke-width="1.2" opacity="0.92"/>
+          <text x="0" y="-1" font-size="7.5" fill="#67e8f9" font-weight="700" text-anchor="middle">鳳山溪竹東</text>
+          <text id="wlVal3" x="0" y="11" font-size="9" fill="#22d3ee" font-weight="700" text-anchor="middle"> 1.87 m </text>
+          <rect id="wlBg3" x="-14" y="15" width="28" height="9" rx="2" fill="#0e7490"/>
+          <text id="wlStat3" x="0" y="22" font-size="6.5" fill="white" text-anchor="middle">正常水位</text>
+          <polygon points="0,-16 5,-11 0,-6 -5,-11" fill="#06b6d4" stroke="white" stroke-width="1"/>
+        </g>
+        <rect x="174" y="280" width="8" height="44" rx="2" fill="#0d2535" stroke="#0e7490" stroke-width="0.8"/>
+        <line x1="173" y1="290" x2="184" y2="290" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,1"/>
+        <text x="185" y="293" font-size="5.5" fill="#f59e0b">警</text>
+        <rect id="waterBar3" x="175" y="302" width="6" height="22" rx="1" fill="#06b6d4" opacity="0.85">
+          <animate attributeName="height" values="22;18;25;20;22" dur="6s" repeatCount="indefinite"/>
+          <animate attributeName="y" values="302;306;299;304;302" dur="6s" repeatCount="indefinite"/>
+        </rect>
+
+        <!-- Legend -->
+        <g transform="translate(10,460)">
+          <rect x="0" y="0" width="130" height="18" rx="3" fill="#0a1e30" stroke="#1e3a4a" stroke-width="0.8" opacity="0.9"/>
+          <polygon points="8,9 11,6 14,9 11,12" fill="#06b6d4"/>
+          <text x="19" y="13" font-size="6.5" fill="#94a3b8">水利署測站</text>
+          <line x1="65" y1="9" x2="72" y2="9" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,1"/>
+          <text x="75" y="13" font-size="6.5" fill="#94a3b8">警戒水位</text>
+        </g>
+      </g>
+
+      <!-- Scan line -->
+      <rect id="scanLine" x="0" y="-60" width="700" height="60" fill="url(#scanGrad)" opacity="0">
+        <animate id="scanAnim" attributeName="y" values="-60;560" dur="3s" repeatCount="0" begin="indefinite"/>
+      </rect>
+
+      <!-- Alert zone -->
+      <g id="alertZone" opacity="0">
+        <rect x="295" y="325" width="70" height="65" rx="6" fill="rgba(239,68,68,0.08)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3">
+          <animate attributeName="stroke-opacity" values="1;0.3;1" dur="1s" repeatCount="indefinite"/>
+        </rect>
+        <rect x="250" y="155" width="65" height="65" rx="6" fill="rgba(239,68,68,0.08)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3">
+          <animate attributeName="stroke-opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite"/>
+        </rect>
+      </g>
+
+      <!-- Field crew markers -->
+      <g id="crewLayer" opacity="0">
+        <g transform="translate(315,340)">
+          <circle r="10" fill="#22c55e" stroke="white" stroke-width="1.5"/>
+          <text x="-4" y="4" font-size="10" fill="white" font-weight="700">👷</text>
+        </g>
+        <g transform="translate(278,172)">
+          <circle r="10" fill="#22c55e" stroke="white" stroke-width="1.5"/>
+          <text x="-4" y="4" font-size="10" fill="white" font-weight="700">👷</text>
+        </g>
+      </g>
+
+      <!-- Repair markers -->
+      <g id="doneLayer" opacity="0">
+        <g transform="translate(325,355)">
+          <circle r="11" fill="#6366f1" stroke="white" stroke-width="1.5"/>
+          <text x="-5" y="4" font-size="11" fill="white">✓</text>
+        </g>
+        <g transform="translate(285,185)">
+          <circle r="11" fill="#6366f1" stroke="white" stroke-width="1.5"/>
+          <text x="-5" y="4" font-size="11" fill="white">✓</text>
+        </g>
+      </g>
+
+      <!-- Compass -->
+      <g transform="translate(660,40)">
+        <circle r="18" fill="rgba(0,0,0,0.5)" stroke="#334155" stroke-width="1"/>
+        <text x="-4" y="-5" font-size="9" fill="#94a3b8" font-weight="700">N</text>
+        <line x1="0" y1="-2" x2="0" y2="-11" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/>
+        <line x1="0" y1="2" x2="0" y2="11" stroke="#475569" stroke-width="2" stroke-linecap="round"/>
+      </g>
+
+      <!-- Scale bar -->
+      <g transform="translate(20,475)">
+        <line x1="0" y1="0" x2="60" y2="0" stroke="#475569" stroke-width="1.5"/>
+        <line x1="0" y1="-3" x2="0" y2="3" stroke="#475569" stroke-width="1.5"/>
+        <line x1="60" y1="-3" x2="60" y2="3" stroke="#475569" stroke-width="1.5"/>
+        <text x="18" y="-5" font-size="8" fill="#475569">1 km</text>
+      </g>
+    </svg>
+
+    <!-- Map layer toggles -->
+    <div class="map-overlay" id="mapOverlay">
+      <span class="map-tag off" id="tag-pipe" style="border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,0.08);">🔴 清淤管段</span>
+      <span class="map-tag off" id="tag-heat" style="border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.08);">🌡 積水熱點</span>
+      <span class="map-tag off" id="tag-tidal" style="border-color:#06b6d4;color:#06b6d4;background:rgba(6,182,212,0.08);">💧 潮汐水位</span>
+      <span class="map-tag off" id="tag-crew" style="border-color:#22c55e;color:#22c55e;background:rgba(34,197,94,0.08);">👷 外勤人員</span>
+    </div>
+
+    <!-- GIS cursor -->
+    <div class="gis-cursor" id="gisCursor" style="left:350px;top:250px;">
+      <svg width="22" height="22" viewBox="0 0 22 22">
+        <polygon points="2,2 2,18 7,14 10,20 12,19 9,13 16,13" fill="white" stroke="#0f172a" stroke-width="1.5"/>
+      </svg>
+    </div>
+
+    <!-- Click ripple -->
+    <div class="click-ripple" id="clickRipple"></div>
+
+    <!-- Alert bubbles -->
+    <div class="alert-bubble warn" id="alertBubble1" style="top:80px;right:20px;">⚠ 大雨特報發布 — 預計 24h 內</div>
+    <div class="alert-bubble" id="alertBubble2" style="top:80px;right:20px;">🚨 豪雨警報 — 即時監控中</div>
+    <div class="alert-bubble success" id="alertBubble3" style="top:80px;right:20px;">✅ 雨停 — 進入復原作業</div>
+    <div class="alert-bubble info" id="alertBubble4" style="top:120px;right:20px;">📊 GIS 資料已封存更新</div>
+
+    <!-- Phase label -->
+    <div class="map-phase-label" id="mapPhaseLabel">
+      <strong>☀️ 平時監控</strong>
+      日常 GIS 作業 — 維護資料品質
+    </div>
+  </div>
+
+  <!-- Right: Situation + Checklist panels -->
+  <div class="right-panel">
+    <!-- Top: Situation board -->
+    <div class="situation-panel">
+      <div class="situation-header">
+        <span class="checklist-title">📡 現況看板</span>
+        <span class="checklist-phase-name" id="situationPhaseName">☀️ 平時監控</span>
+      </div>
+      <div class="situation-body" id="situationBody">
+      </div>
+    </div>
+
+    <!-- Bottom: SOP checklist -->
+    <div class="checklist-panel">
+      <div class="checklist-header">
+        <span class="checklist-title">📋 SOP 操作清單</span>
+        <span class="checklist-phase-name" id="checklistPhaseName">☀️ 平時監控</span>
+      </div>
+      <div class="checklist-body" id="checklistBody">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <button class="ctrl-btn" onclick="prevStep()">◀ 上一步</button>
+  <button class="ctrl-btn primary" onclick="nextStep()">下一步 ▶</button>
+  <div class="progress-track" onclick="onProgressClick(event)">
+    <div class="progress-fill" id="progressFill" style="width:0%"></div>
+  </div>
+  <div class="step-indicators" id="stepDots"></div>
+  <label class="auto-btn" onclick="toggleAuto()">
+    <div class="auto-toggle" id="autoToggle"></div>
+    自動播放
+  </label>
+</div>
+
+<!-- Rain drops container -->
+<div id="rainContainer" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:hidden;"></div>
+
+<script>
+const PHASES = [
+  {id:0,label:'☀️ 平時監控',subLabel:'日常 GIS 作業 — 維護資料品質',rainIntensity:0,rainColor:null,steps:[{title:'開啟 GIS 系統，載入基本圖層',cursorTo:{x:350,y:200},clickAt:{x:350,y:200},layers:{pipe:false,heat:false,tidal:true,crew:false},mapLayers:{tidal:true},alertShow:null,situation:[{icon:'💧',label:'水位狀況',value:'3站全部正常',type:'ok'},{icon:'🔩',label:'管段狀況',value:'8段 / 無異常',type:'ok'},{icon:'👷',label:'外勤狀態',value:'例行巡查中',type:'muted'},{icon:'📅',label:'待辦清淤',value:'zd-01、zb-02 優先',type:'warn'}],waterLevels:[{v:'2.34',s:'正常水位',c:'#06b6d4',f:35},{v:'3.12',s:'正常水位',c:'#06b6d4',f:38},{v:'1.87',s:'正常水位',c:'#06b6d4',f:30}],checkItems:[{section:'每日作業',items:[{badge:'doing',text:'登入 GIS 系統，確認各圖層正常',sub:'確認潮汐圖層、管線圖層均可載入'},{badge:'todo',text:'檢閱昨日系統日誌',sub:'確認無資料異常或錯誤'},{badge:'todo',text:'更新當月巡查行事曆',sub:'依 115年清淤優先清單安排'}]},{section:'資料品質維護',items:[{badge:'todo',text:'確認管線 GPS 資料完整率',sub:'竹北/竹東共 9,168 段需有座標'},{badge:'todo',text:'新增本月巡查紀錄',sub:'上傳現場照片與淤積量測值'},{badge:'todo',text:'回顧 113/114年清淤成效',sub:'確認已清淤管段是否有復淤跡象'}]}]},{title:'查看 115年清淤優先管段',cursorTo:{x:325,y:355},clickAt:{x:325,y:355},layers:{pipe:true,heat:false,tidal:true,crew:false},mapLayers:{pipe:true,tidal:true},alertShow:null,situation:[{icon:'💧',label:'水位狀況',value:'3站正常',type:'ok'},{icon:'🔴',label:'zd-01 大同路',value:'高優先 · 3年未清',type:'danger'},{icon:'🔴',label:'zb-02 文興路',value:'高優先 · 積水紀錄',type:'danger'},{icon:'🟠',label:'zb-05 / zd-02',value:'中優先 · 需安排',type:'warn'}],waterLevels:[{v:'2.28',s:'正常水位',c:'#06b6d4',f:33},{v:'3.05',s:'正常水位',c:'#06b6d4',f:40},{v:'1.82',s:'正常水位',c:'#06b6d4',f:27}],checkItems:[{section:'每日作業',items:[{badge:'done',text:'登入 GIS 系統，確認各圖層正常',sub:'✓ 完成'},{badge:'doing',text:'查閱 115年建議清淤管段',sub:'共 8 段（竹北 4 + 竹東 4），總經費 1,100 萬元'},{badge:'todo',text:'更新本月巡查行事曆',sub:''}]},{section:'清淤優先清單 (115年)',items:[{badge:'urgent',text:'🔴 zd-01 大同路（竹東）',sub:'高優先 · 需本季完成'},{badge:'urgent',text:'🔴 zb-02 文興路（竹北）',sub:'高優先 · 需本季完成'},{badge:'todo',text:'🟠 zd-02 東興路（竹東）',sub:'中優先 · 次季辦理'},{badge:'todo',text:'🟠 zb-05 縣政二路（竹北）',sub:'中優先 · 次季辦理'}]}]},{title:'確認巡查排程並記錄',cursorTo:{x:450,y:190},clickAt:{x:450,y:190},layers:{pipe:true,heat:true,tidal:true,crew:false},mapLayers:{pipe:true,heat:true,tidal:true},alertShow:null,situation:[{icon:'💧',label:'水位狀況',value:'3站正常',type:'ok'},{icon:'🗓',label:'巡查排程',value:'本月 2組已安排',type:'info'},{icon:'🚛',label:'高壓清洗車',value:'2台 就位 ✓',type:'ok'},{icon:'📋',label:'管線完整率',value:'98.2%',type:'ok'}],waterLevels:[{v:'2.41',s:'正常水位',c:'#06b6d4',f:36},{v:'3.18',s:'正常水位',c:'#06b6d4',f:43},{v:'1.91',s:'正常水位',c:'#06b6d4',f:29}],checkItems:[{section:'每日作業',items:[{badge:'done',text:'登入 GIS 系統',sub:'✓ 完成'},{badge:'done',text:'查閱 115年建議清淤管段',sub:'✓ 8 段確認'},{badge:'doing',text:'安排本月巡查人員',sub:'開啟積水歷史熱點圖層，確認重點路段'}]},{section:'平時監控重點',items:[{badge:'done',text:'查閱積水歷史熱點圖層',sub:'5 個熱點已標示'},{badge:'todo',text:'安排高優先管段現場巡查',sub:'zd-01、zb-02 本月巡查'},{badge:'todo',text:'輸入巡查紀錄至 GIS',sub:'包含淤積深度、管徑狀況'},{badge:'todo',text:'每月彙整回報科長',sub:'月底前上傳報告'}]}]}]},{id:1,label:'🌧 大雨預報期',subLabel:'預報發布後 T-24h 起動作業',rainIntensity:0.3,rainColor:'rgba(147,197,253,0.5)',steps:[{title:'收到大雨特報 — 開啟預警圖層',cursorTo:{x:200,y:130},clickAt:{x:200,y:130},layers:{pipe:true,heat:true,tidal:true,crew:false},mapLayers:{pipe:true,heat:true,tidal:true},alertShow:'bubble1',situation:[{icon:'🌧',label:'氣象預報',value:'大雨特報 發布 ⚠',type:'warn'},{icon:'💧',label:'水位趨勢',value:'3站 上升中 ⬆',type:'warn'},{icon:'🔴',label:'高風險管段',value:'zd-01、zb-02 受影響',type:'danger'},{icon:'👷',label:'外勤狀態',value:'已通知 進入待命',type:'info'}],waterLevels:[{v:'3.62',s:'水位上升 ⬆',c:'#f59e0b',f:52},{v:'4.45',s:'水位上升 ⬆',c:'#f59e0b',f:65},{v:'2.85',s:'水位上升 ⬆',c:'#f59e0b',f:43}],checkItems:[{section:'⚡ 立即行動 (T-24h)',items:[{badge:'doing',text:'收到中央氣象署大雨特報',sub:'確認預報降雨量與影響時間'},{badge:'todo',text:'開啟 GIS 潮汐水位圖層',sub:'確認河川水位現況'},{badge:'todo',text:'開啟積水歷史熱點圖層',sub:'比對本次降雨影響範圍'},{badge:'todo',text:'開啟 115年清淤管段圖層',sub:'確認高優先管段是否在影響區'}]},{section:'聯絡作業',items:[{badge:'todo',text:'通知外勤組長進入待命',sub:'待系統評估後確認派遣點位'},{badge:'todo',text:'確認緊急清淤備用機具',sub:'高壓清洗車 × 2、疏通機具'}]}]},{title:'掃描高優先管段 — 確認巡查點',cursorTo:{x:285,y:185},clickAt:{x:285,y:185},layers:{pipe:true,heat:true,tidal:true,crew:false},mapLayers:{pipe:true,heat:true,tidal:true,scan:true},alertShow:null,situation:[{icon:'💧',label:'竹北橋',value:'4.18m ⚠ 接近警戒',type:'warn'},{icon:'💧',label:'新竹大橋',value:'5.01m ⚠ 注意',type:'warn'},{icon:'💧',label:'竹東',value:'3.42m ⬆ 上升',type:'warn'},{icon:'🔴',label:'熱點重疊',value:'zd-01、zb-02 高風險',type:'danger'}],waterLevels:[{v:'4.18',s:'接近警戒 ⚠',c:'#f97316',f:63},{v:'5.01',s:'注意水位 ⚠',c:'#f97316',f:76},{v:'3.42',s:'水位上升 ⬆',c:'#f59e0b',f:52}],checkItems:[{section:'⚡ 立即行動 (T-24h)',items:[{badge:'done',text:'收到大雨特報',sub:'✓ 確認影響範圍'},{badge:'done',text:'開啟預警相關圖層',sub:'✓ 三項圖層已啟動'},{badge:'doing',text:'確認 4 個高優先管段現況',sub:'zd-01、zd-02、zb-02、zb-05 重點掃描'},{badge:'todo',text:'指定現場巡查路線',sub:'依 GIS 管段座標規劃路線'}]},{section:'管段預警狀態',items:[{badge:'urgent',text:'🔴 zd-01 大同路 ← 積水熱點重疊',sub:'→ 優先派員確認'},{badge:'urgent',text:'🔴 zb-02 文興路 ← 積水熱點重疊',sub:'→ 優先派員確認'},{badge:'todo',text:'🟠 zd-02 東興路',sub:'次要關注'},{badge:'todo',text:'🟠 zb-05 縣政二路',sub:'次要關注'}]}]},{title:'通知外勤人員，發布巡查任務',cursorTo:{x:400,y:300},clickAt:{x:400,y:300},layers:{pipe:true,heat:true,tidal:true,crew:false},mapLayers:{pipe:true,heat:true,tidal:true},alertShow:null,situation:[{icon:'💧',label:'竹北橋',value:'4.65m ⚠ 注意',type:'warn'},{icon:'💧',label:'新竹大橋',value:'5.48m ⚠ 接近警戒',type:'warn'},{icon:'🚛',label:'高壓清洗車',value:'已就位 zd-01、zb-02',type:'ok'},{icon:'👷',label:'外勤 2組',value:'任務已確認 ✓',type:'info'}],waterLevels:[{v:'4.65',s:'接近警戒 ⚠',c:'#f97316',f:73},{v:'5.48',s:'接近警戒 ⚠',c:'#f97316',f:85},{v:'4.01',s:'接近警戒 ⚠',c:'#f97316',f:62}],checkItems:[{section:'派遣作業',items:[{badge:'done',text:'確認管段優先順序',sub:'✓ GIS 評估完成'},{badge:'doing',text:'透過系統發出巡查任務單',sub:'zd-01、zb-02 各派一組人員'},{badge:'todo',text:'外勤組長確認任務接收',sub:'回覆確認後更新 GIS 狀態'}]},{section:'預備工作',items:[{badge:'doing',text:'確認緊急清淤設備就位',sub:'高壓車停放 zb-02、zd-01 附近'},{badge:'todo',text:'通知相關單位進入聯絡網',sub:'新竹縣消防局、工務處災防科'},{badge:'todo',text:'設定 GIS 豪雨應變模式',sub:'更新頻率由 1h → 15min'}]}]}]},{id:2,label:'⛈ 豪雨應變',subLabel:'降雨期間 — 即時監控與緊急調度',rainIntensity:0.85,rainColor:'rgba(147,197,253,0.7)',steps:[{title:'豪雨來臨 — 啟動緊急應變',cursorTo:{x:350,y:250},clickAt:{x:350,y:250},layers:{pipe:true,heat:true,tidal:true,crew:true},mapLayers:{pipe:true,heat:true,tidal:true,alert:true,crew:true},alertShow:'bubble2',situation:[{icon:'🔴',label:'竹北橋',value:'5.42m 🔴 超警戒',type:'danger'},{icon:'🔴',label:'新竹大橋',value:'6.52m 🔴 超警戒',type:'danger'},{icon:'⚠',label:'竹東',value:'4.68m ⚠ 警戒水位',type:'warn'},{icon:'🚨',label:'積水通報',value:'zd-01、zb-02 已通報',type:'danger'}],waterLevels:[{v:'5.42',s:'超警戒 🔴',c:'#ef4444',f:87},{v:'6.52',s:'超警戒 🔴',c:'#ef4444',f:98},{v:'4.68',s:'警戒水位 ⚠',c:'#f97316',f:74}],checkItems:[{section:'🚨 緊急應變 SOP',items:[{badge:'doing',text:'切換 GIS 至豪雨應變模式',sub:'即時更新頻率：每 15 分鐘'},{badge:'doing',text:'監控水位站數值',sub:'頭前溪水位 ≥ 警戒線 → 即時通報'},{badge:'urgent',text:'🚨 zd-01 現場積水通報',sub:'外勤已到現場確認 → 等候清淤指示'},{badge:'urgent',text:'🚨 zb-02 水位上升中',sub:'高壓清洗車已就位'}]},{section:'聯絡協調',items:[{badge:'doing',text:'每 30 分鐘向災防科回報',sub:'回報積水狀況、管段疏通進度'},{badge:'todo',text:'若積水持續 — 申請增援',sub:'啟動縣府緊急應變程序'}]}]},{title:'外勤即時回報 — GIS 標記現況',cursorTo:{x:315,y:340},clickAt:{x:315,y:340},layers:{pipe:true,heat:true,tidal:true,crew:true},mapLayers:{pipe:true,heat:true,tidal:true,alert:true,crew:true},alertShow:null,situation:[{icon:'🔴',label:'竹北橋',value:'6.18m 🔴 超警戒（高峰）',type:'danger'},{icon:'🔴',label:'新竹大橋',value:'7.24m 🔴 超警戒（高峰）',type:'danger'},{icon:'🔴',label:'竹東',value:'5.35m 🔴 超警戒',type:'danger'},{icon:'🚨',label:'新增積水',value:'縣政二路 第3組前往',type:'danger'}],waterLevels:[{v:'6.18',s:'超警戒 🔴',c:'#ef4444',f:94},{v:'7.24',s:'超警戒 🔴',c:'#ef4444',f:100},{v:'5.35',s:'超警戒 🔴',c:'#ef4444',f:85}],checkItems:[{section:'🚨 緊急應變 SOP',items:[{badge:'done',text:'切換豪雨應變模式',sub:'✓ 每 15 分鐘更新'},{badge:'doing',text:'於 GIS 標記積水位置',sub:'依外勤 LINE 回報，更新地圖標記'},{badge:'doing',text:'zd-01 清淤作業進行中',sub:'預計 2 小時完成疏通'},{badge:'urgent',text:'🚨 新增積水 — 縣政二路',sub:'派遣第三組人員前往確認'}]},{section:'文件紀錄',items:[{badge:'doing',text:'即時填寫災情紀錄單',sub:'時間、地點、積水深度、處置'},{badge:'todo',text:'拍照上傳至 GIS 系統',sub:'現場照片連結至管段點位'}]}]},{title:'持續監控直至降雨趨緩',cursorTo:{x:200,y:270},clickAt:{x:200,y:270},layers:{pipe:true,heat:true,tidal:true,crew:true},mapLayers:{pipe:true,heat:true,tidal:true,alert:true,crew:true},alertShow:null,situation:[{icon:'🔴',label:'竹北橋',value:'5.84m 🔴 超警戒',type:'danger'},{icon:'🔴',label:'新竹大橋',value:'6.88m 🔴 超警戒',type:'danger'},{icon:'🔴',label:'竹東',value:'5.12m 🔴 超警戒',type:'danger'},{icon:'✅',label:'zd-01 清淤',value:'已完成疏通 ✓',type:'ok'}],waterLevels:[{v:'5.84',s:'超警戒 🔴',c:'#ef4444',f:91},{v:'6.88',s:'超警戒 🔴',c:'#ef4444',f:99},{v:'5.12',s:'超警戒 🔴',c:'#ef4444',f:81}],checkItems:[{section:'持續監控項目',items:[{badge:'doing',text:'每 15 分鐘查閱 GIS 水位圖層',sub:'水位下降才可解除警戒'},{badge:'doing',text:'確認各路段清淤進度',sub:'zd-01 ✓、zb-02 進行中'},{badge:'urgent',text:'⚡ 若水位持續升高',sub:'立即通報縣府啟動二級應變'},{badge:'todo',text:'確認水位恢復正常後',sub:'→ 各組人員可暫時撤離待命'}]},{section:'準備復原',items:[{badge:'todo',text:'確認雨停後啟動損壞評估',sub:'進入 Phase 3 流程'},{badge:'todo',text:'整理本次應變紀錄',sub:'供災後報告使用'}]}]}]},{id:3,label:'🔵 災後復原',subLabel:'雨停後 24h — 評估、通報與更新',rainIntensity:0,rainColor:null,steps:[{title:'雨停 — 啟動損壞評估作業',cursorTo:{x:325,y:355},clickAt:{x:325,y:355},layers:{pipe:true,heat:false,tidal:true,crew:false},mapLayers:{pipe:true,tidal:true,done:true},alertShow:'bubble3',situation:[{icon:'💧',label:'竹北橋',value:'4.82m ↓ 下降中',type:'warn'},{icon:'💧',label:'新竹大橋',value:'5.12m ↓ 下降中',type:'warn'},{icon:'💧',label:'竹東',value:'3.98m ↓ 下降中',type:'warn'},{icon:'🔍',label:'損壞管段',value:'3段 待現場確認',type:'warn'}],waterLevels:[{v:'4.82',s:'水位下降 ↓',c:'#f97316',f:76},{v:'5.12',s:'水位下降 ↓',c:'#f97316',f:78},{v:'3.98',s:'水位下降 ↓',c:'#f59e0b',f:61}],checkItems:[{section:'災後評估 (雨停後 6h 內)',items:[{badge:'doing',text:'外勤人員巡視全部 8 個管段',sub:'確認是否有新增損壞或堵塞'},{badge:'doing',text:'於 GIS 標記本次受災管段',sub:'輸入損壞等級與估計修復費用'},{badge:'todo',text:'拍照記錄積水、管壁狀況',sub:'上傳至 GIS 系統管段點位'},{badge:'todo',text:'填寫「天然災害通報單」',sub:'24h 內上報工務處'}]},{section:'清淤確認',items:[{badge:'done',text:'✓ zd-01 大同路清淤完成',sub:'已疏通，恢復正常排水'},{badge:'doing',text:'確認 zb-02 文興路清淤狀況',sub:'現場確認疏通是否完成'}]}]},{title:'更新 GIS 管段狀態與評分',cursorTo:{x:450,y:190},clickAt:{x:450,y:190},layers:{pipe:true,heat:false,tidal:false,crew:false},mapLayers:{pipe:true,done:true},alertShow:null,situation:[{icon:'💧',label:'竹北橋',value:'3.45m ↓ 持續下降',type:'warn'},{icon:'💧',label:'新竹大橋',value:'4.02m ↓ 下降中',type:'warn'},{icon:'✅',label:'zd-01 清淤',value:'完成 · 恢復正常排水',type:'ok'},{icon:'✅',label:'zb-02 清淤',value:'確認完成 ✓',type:'ok'}],waterLevels:[{v:'3.45',s:'水位下降 ↓',c:'#f59e0b',f:50},{v:'4.02',s:'水位下降 ↓',c:'#f59e0b',f:60},{v:'2.74',s:'接近正常 ↓',c:'#f59e0b',f:41}],checkItems:[{section:'資料更新 (雨停後 24h 內)',items:[{badge:'done',text:'損壞通報完成',sub:'✓ 已上報工務處'},{badge:'doing',text:'更新各管段淤積評分',sub:'依本次現場量測結果調整優先順序'},{badge:'doing',text:'若有新增堵塞 → 加入清淤清單',sub:'列入 115年年中追加預算申請'},{badge:'todo',text:'確認清淤成效列入績效報告',sub:'每次清淤均需紀錄前後對照'}]},{section:'下次預備',items:[{badge:'todo',text:'檢討本次應變流程',sub:'有無改善點？更新 SOP 文件'},{badge:'todo',text:'預排下次高優先管段巡查',sub:'依更新後評分重新安排'}]}]},{title:'封存資料，回到平時監控模式',cursorTo:{x:350,y:200},clickAt:{x:350,y:200},layers:{pipe:false,heat:false,tidal:true,crew:false},mapLayers:{tidal:true,done:true},alertShow:'bubble4',situation:[{icon:'✅',label:'竹北橋',value:'2.68m ✓ 恢復正常',type:'ok'},{icon:'✅',label:'新竹大橋',value:'3.35m ✓ 恢復正常',type:'ok'},{icon:'✅',label:'竹東',value:'2.12m ✓ 恢復正常',type:'ok'},{icon:'📄',label:'應變報告',value:'準備完成 待科長核閱',type:'info'}],waterLevels:[{v:'2.68',s:'恢復正常 ✓',c:'#22c55e',f:38},{v:'3.35',s:'恢復正常 ✓',c:'#22c55e',f:46},{v:'2.12',s:'恢復正常 ✓',c:'#22c55e',f:32}],checkItems:[{section:'收尾作業',items:[{badge:'done',text:'✓ 災後評估完成',sub:''},{badge:'done',text:'✓ GIS 管段評分更新完成',sub:''},{badge:'doing',text:'封存本次事件資料',sub:'含 GIS 截圖、災情紀錄、照片'},{badge:'doing',text:'產出本次應變報告',sub:'提交科長核閱，副本存檔'}]},{section:'回到平時監控',items:[{badge:'doing',text:'關閉豪雨應變模式',sub:'GIS 更新頻率恢復每小時'},{badge:'todo',text:'下次 SOP 演練排程',sub:'建議每季一次 → 下次：115年 Q3'}]}]}]}];
+
+let currentPhase=0,currentStep=0,isAutoPlay=false,autoTimer=null,rainDrops=[],totalSteps=PHASES.reduce((s,p)=>s+p.steps.length,0);
+
+function init(){buildStepDots();updateClock();setInterval(updateClock,1000);renderStep(0,0,true);}
+function updateClock(){const now=new Date();document.getElementById('clockEl').textContent=now.toLocaleTimeString('zh-TW');}
+function buildStepDots(){const container=document.getElementById('stepDots');let html='';let globalIdx=0;PHASES.forEach(p=>{p.steps.forEach(()=>{html+=`<div class="step-dot" id="dot${globalIdx}" onclick="goToGlobalStep(${globalIdx})"></div>`;globalIdx++;});});container.innerHTML=html;}
+function globalStepIndex(phase,step){let idx=0;for(let i=0;i<phase;i++)idx+=PHASES[i].steps.length;return idx+step;}
+function fromGlobalStep(globalIdx){let idx=0;for(let p=0;p<PHASES.length;p++){if(idx+PHASES[p].steps.length>globalIdx){return{phase:p,step:globalIdx-idx};}idx+=PHASES[p].steps.length;}return{phase:PHASES.length-1,step:PHASES[PHASES.length-1].steps.length-1};}
+function goToPhase(p){renderStep(p,0);}
+function goToGlobalStep(g){const{phase,step}=fromGlobalStep(g);renderStep(phase,step);}
+function nextStep(){const phase=PHASES[currentPhase];if(currentStep<phase.steps.length-1){renderStep(currentPhase,currentStep+1);}else if(currentPhase<PHASES.length-1){renderStep(currentPhase+1,0);}else{renderStep(0,0);}}
+function prevStep(){if(currentStep>0){renderStep(currentPhase,currentStep-1);}else if(currentPhase>0){const prevPhase=currentPhase-1;renderStep(prevPhase,PHASES[prevPhase].steps.length-1);}}
+function toggleAuto(){isAutoPlay=!isAutoPlay;const toggle=document.getElementById('autoToggle');if(isAutoPlay){toggle.classList.add('on');autoTimer=setInterval(nextStep,4000);}else{toggle.classList.remove('on');clearInterval(autoTimer);}}
+function onProgressClick(e){const rect=e.currentTarget.getBoundingClientRect();const ratio=(e.clientX-rect.left)/rect.width;const targetGlobal=Math.floor(ratio*totalSteps);goToGlobalStep(Math.min(targetGlobal,totalSteps-1));}
+function renderSituation(items,phaseLabel){const body=document.getElementById('situationBody');if(!items||!body)return;body.innerHTML=items.map(item=>`<div class="situ-row ${item.type}"><span class="situ-label">${item.icon} ${item.label}</span><span class="situ-value ${item.type}">${item.value}</span></div>`).join('');}
+function updateWaterLevels(wl){if(!wl||wl.length<3)return;const bars=[{valId:'wlVal1',statId:'wlStat1',bgId:'wlBg1',barId:'waterBar1',barBottom:144,outerY:100},{valId:'wlVal2',statId:'wlStat2',bgId:'wlBg2',barId:'waterBar2',barBottom:199,outerY:155},{valId:'wlVal3',statId:'wlStat3',bgId:'wlBg3',barId:'waterBar3',barBottom:324,outerY:280}];bars.forEach((b,i)=>{const w=wl[i];if(!w)return;const valEl=document.getElementById(b.valId);if(valEl){valEl.childNodes.forEach(n=>{if(n.nodeType===3)n.textContent=' '+w.v+' m ';});}const statEl=document.getElementById(b.statId);if(statEl)statEl.textContent=w.s;const bgEl=document.getElementById(b.bgId);if(bgEl){const bgMap={'#06b6d4':'#0e7490','#22c55e':'#166534','#f59e0b':'#92400e','#f97316':'#9a3412','#ef4444':'#991b1b'};bgEl.setAttribute('fill',bgMap[w.c]||'#0e7490');}const barEl=document.getElementById(b.barId);if(barEl){const fillH=Math.round((w.f/100)*44);const newY=b.barBottom-fillH;while(barEl.firstChild)barEl.removeChild(barEl.firstChild);barEl.setAttribute('y',newY);barEl.setAttribute('height',fillH);barEl.setAttribute('fill',w.c);if(w.c==='#ef4444'){barEl.style.filter='drop-shadow(0 0 4px rgba(239,68,68,0.8))';}else{barEl.style.filter='';}}});}
+function renderStep(phase,step,immediate){currentPhase=phase;currentStep=step;const phaseData=PHASES[phase];const stepData=phaseData.steps[step];const globalIdx=globalStepIndex(phase,step);const pct=totalSteps<=1?100:(globalIdx/(totalSteps-1))*100;document.getElementById('progressFill').style.width=pct+'%';document.querySelectorAll('.step-dot').forEach((d,i)=>{d.classList.remove('active','done');if(i===globalIdx)d.classList.add('active');else if(i<globalIdx)d.classList.add('done');});PHASES.forEach((p,pi)=>{const card=document.getElementById('phaseCard'+pi);card.classList.remove('active','done');if(pi===phase)card.classList.add('active');else if(pi<phase)card.classList.add('done');let phaseProg=0;if(pi<phase)phaseProg=100;else if(pi===phase)phaseProg=step===0?20:(step/(p.steps.length-1))*100;document.getElementById('prog'+pi).style.width=phaseProg+'%';});updateRain(phaseData.rainIntensity,phaseData.rainColor);const bar=document.getElementById('rainBar');bar.style.width=(phaseData.rainIntensity*100)+'%';if(phaseData.rainIntensity===0)bar.style.background='#22c55e';else if(phaseData.rainIntensity<0.5)bar.style.background='#f59e0b';else bar.style.background='#ef4444';document.getElementById('mapPhaseLabel').innerHTML=`<strong>${phaseData.label}</strong>${phaseData.subLabel}`;document.getElementById('checklistPhaseName').textContent=phaseData.label;document.getElementById('situationPhaseName').textContent=phaseData.label;const ml=stepData.mapLayers||{};animateLayer('pipeLayer',!!ml.pipe);animateLayer('heatLayer',!!ml.heat);animateLayer('hotspotLayer',!!ml.heat);animateLayer('tidalLayer',!!ml.tidal);animateLayer('alertZone',!!ml.alert);animateLayer('crewLayer',!!ml.crew);animateLayer('doneLayer',!!ml.done);setTag('tag-pipe',!!stepData.layers.pipe);setTag('tag-heat',!!stepData.layers.heat);setTag('tag-tidal',!!stepData.layers.tidal);setTag('tag-crew',!!stepData.layers.crew);if(ml.scan){document.getElementById('scanLine').style.opacity='1';const anim=document.getElementById('scanAnim');anim.setAttribute('repeatCount','indefinite');anim.beginElement();}else{document.getElementById('scanLine').style.opacity='0';const anim=document.getElementById('scanAnim');anim.setAttribute('repeatCount','0');}const mapArea=document.getElementById('mapArea');const mapRect=mapArea.getBoundingClientRect();const svgW=700,svgH=500;const scaleX=mapRect.width/svgW;const scaleY=mapRect.height/svgH;const cursorLeft=stepData.cursorTo.x*scaleX;const cursorTop=stepData.cursorTo.y*scaleY;const cursor=document.getElementById('gisCursor');cursor.style.left=cursorLeft+'px';cursor.style.top=cursorTop+'px';setTimeout(()=>{const ripple=document.getElementById('clickRipple');ripple.style.left=(stepData.clickAt.x*scaleX)+'px';ripple.style.top=(stepData.clickAt.y*scaleY)+'px';ripple.style.display='block';ripple.style.animation='none';setTimeout(()=>{ripple.style.animation='ripple 0.6s ease-out forwards';setTimeout(()=>{ripple.style.display='none';},700);},50);},800);['alertBubble1','alertBubble2','alertBubble3','alertBubble4'].forEach(id=>{document.getElementById(id).style.display='none';});if(stepData.alertShow==='bubble1')showBubble('alertBubble1');else if(stepData.alertShow==='bubble2')showBubble('alertBubble2');else if(stepData.alertShow==='bubble3')showBubble('alertBubble3');else if(stepData.alertShow==='bubble4'){showBubble('alertBubble3');setTimeout(()=>showBubble('alertBubble4'),1000);}renderSituation(stepData.situation,phaseData.label);updateWaterLevels(stepData.waterLevels);renderChecklist(stepData.checkItems);}
+function showBubble(id){const el=document.getElementById(id);el.style.display='block';el.style.animation='none';setTimeout(()=>{el.style.animation='slideIn 0.3s ease';},10);setTimeout(()=>{el.style.display='none';},4000);}
+function animateLayer(id,show){const el=document.getElementById(id);if(!el)return;el.style.transition='opacity 0.6s ease';el.style.opacity=show?'1':'0';}
+function setTag(id,on){const el=document.getElementById(id);el.classList.toggle('on',on);el.classList.toggle('off',!on);}
+function renderChecklist(sections){const body=document.getElementById('checklistBody');let html='';sections.forEach(section=>{html+=`<div class="checklist-section">`;html+=`<div class="checklist-section-title">${section.section}</div>`;section.items.forEach(item=>{const isUrgent=item.badge==='urgent';const isDone=item.badge==='done';const textClass=isDone?'done-text':isUrgent?'urgent-text':'';const badgeLabel={'todo':'待辦','doing':'執行中','done':'✓ 完成','urgent':'⚡ 緊急'}[item.badge]||item.badge;html+=`<div class="checklist-item"><span class="item-badge badge-${item.badge}">${badgeLabel}</span><div><div class="item-text ${textClass}">${item.text}</div>${item.sub?`<div class="item-subtext">${item.sub}</div>`:''}</div></div>`;});html+=`</div>`;});body.innerHTML=html;}
+function updateRain(intensity,color){const container=document.getElementById('rainContainer');rainDrops.forEach(d=>d.remove());rainDrops=[];if(intensity<=0)return;const count=Math.floor(intensity*120);for(let i=0;i<count;i++){const drop=document.createElement('div');drop.className='rain-drop';const left=Math.random()*100;const height=8+Math.random()*14;const duration=0.5+Math.random()*0.8;const delay=Math.random()*2;drop.style.cssText=`left: ${left}vw;height: ${height}px;top: -${height}px;background: linear-gradient(transparent, ${color||'rgba(147,197,253,0.6)'});animation: fall ${duration}s linear ${delay}s infinite;`;container.appendChild(drop);rainDrops.push(drop);}}
+
+window.addEventListener('load',init);window.addEventListener('resize',()=>{renderStep(currentPhase,currentStep,true);});
+function toggleNight(){const isNight=document.body.classList.toggle('night');document.getElementById('nightBtn').textContent=isNight?'☀️ 日間模式':'🌙 夜間模式';localStorage.setItem('nightMode',isNight?'1':'0');}
+if(localStorage.getItem('nightMode')==='1')toggleNight();
+</script>
+</body>
+</html>
