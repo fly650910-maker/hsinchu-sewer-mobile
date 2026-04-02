@@ -13,7 +13,8 @@ export default function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const isLoggedIn = request.cookies.get('sewer_session')?.value === 'active_session';
+  // gis_auth cookie is set by /api/auth/login as base64(username:password)
+  const isLoggedIn = !!request.cookies.get('gis_auth')?.value;
 
   if (!isLoggedIn) {
     return NextResponse.redirect(new URL('/login', request.url));
