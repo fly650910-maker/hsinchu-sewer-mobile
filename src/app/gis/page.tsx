@@ -1688,7 +1688,6 @@ export default function GisQueryPage() {
               {[
                 ...(systemType === '污水' ? [{ checked: showComplaints || showHistoryReports, onChange: (v: boolean) => { setShowComplaints(v); setShowHistoryReports(v); if (v && pipeReports.length === 0) fetchPipeReports('all'); }, label: '🔴 塞管通報', color: '#ef4444' }] : []),
                 { checked: showSedSurvey, onChange: (v: boolean) => { setShowSedSurvey(v); if (v) fetchSedSurvey(); }, label: `🟤 管線淤積（縱走${sedSurveyLines.length > 0 ? `·${sedSurveyLines.length}管段` : ''}）`, color: '#b45309' },
-                { checked: showPipelineConditions, onChange: (v: boolean) => { setShowPipelineConditions(v); if (v && pipelineConditions.length === 0) fetchPipelineConditions(); }, label: '⚠️ 管線狀況', color: '#eab308' },
               ].map(({ checked, onChange, label, color }) => (
                 <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '5px 6px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                   <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
