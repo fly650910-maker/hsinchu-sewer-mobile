@@ -3047,20 +3047,32 @@ export default function GisQueryPage() {
                   return (
                     <div style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626', borderRadius: '8px', padding: '8px 10px', fontSize: '0.72rem', animation: 'pulse 1.2s ease-in-out infinite' }}>
                       <div style={{ color: '#dc2626', fontWeight: '800', fontSize: '0.78rem', marginBottom: '3px' }}>🚨 雨量超標！立即注意</div>
-                      <div style={{ color: '#7f1d1d', lineHeight: '1.5' }}>
+                      <div style={{ color: '#7f1d1d', lineHeight: '1.5', marginBottom: '6px' }}>
                         最大1小時雨量 <strong>{max1hr.toFixed(0)} mm/hr</strong>（{topSt?.stationName ?? '—'}）<br />
                         上方管段可能<strong>已積水或倒灌</strong>，請即時巡查！
                       </div>
+                      {topSt?.lat && topSt?.lng && (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button onClick={() => { setMapCenter([topSt.lat, topSt.lng]); setClickCoords([topSt.lat, topSt.lng]); }} style={{ flex: 1, padding: '3px', borderRadius: '4px', backgroundColor: '#dc2626', color: 'white', border: 'none', fontSize: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>🗺️ 定位雨量站</button>
+                          <button onClick={() => openStreetView(topSt.lat, topSt.lng)} style={{ flex: 1, padding: '3px', borderRadius: '4px', backgroundColor: 'transparent', color: '#dc2626', border: '1px solid #dc2626', fontSize: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>📷 街景</button>
+                        </div>
+                      )}
                     </div>
                   );
                 } else if (max1hr >= 15 || max10m >= 5) {
                   return (
                     <div style={{ backgroundColor: '#fefce8', border: '2px solid #eab308', borderRadius: '8px', padding: '8px 10px', fontSize: '0.72rem' }}>
                       <div style={{ color: '#a16207', fontWeight: '700', marginBottom: '3px' }}>⚠️ 雨量偏高，請留意管段</div>
-                      <div style={{ color: '#713f12', lineHeight: '1.5' }}>
+                      <div style={{ color: '#713f12', lineHeight: '1.5', marginBottom: '6px' }}>
                         1小時 <strong>{max1hr.toFixed(0)} mm</strong>（{topSt?.stationName ?? '—'}）<br />
                         以下高風險管段<strong>可能開始積水</strong>，建議備勤。
                       </div>
+                      {topSt?.lat && topSt?.lng && (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button onClick={() => { setMapCenter([topSt.lat, topSt.lng]); setClickCoords([topSt.lat, topSt.lng]); }} style={{ flex: 1, padding: '3px', borderRadius: '4px', backgroundColor: '#eab308', color: 'white', border: 'none', fontSize: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>🗺️ 定位雨量站</button>
+                          <button onClick={() => openStreetView(topSt.lat, topSt.lng)} style={{ flex: 1, padding: '3px', borderRadius: '4px', backgroundColor: 'transparent', color: '#a16207', border: '1px solid #eab308', fontSize: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>📷 街景</button>
+                        </div>
+                      )}
                     </div>
                   );
                 }
