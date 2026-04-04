@@ -585,6 +585,7 @@ export default function GisQueryPage() {
   // 未來建議清淤管段（115年規劃）
   const [showDredgingFuture, setShowDredgingFuture] = useState(false);
   const [dredgingSuggestions, setDredgingSuggestions] = useState<any[]>([]);
+  const [dredgingSuggestionsLoaded, setDredgingSuggestionsLoaded] = useState(false);
   const [dredgingMeta, setDredgingMeta] = useState<{ budget_total_wan: number; budget_used_wan: number; budget_remaining_wan: number; total_length_m: number } | null>(null);
 
   // 塞管通報（開口契約歷史紀錄）
@@ -1063,6 +1064,7 @@ export default function GisQueryPage() {
         });
       }
     } catch (e) { console.error('fetchDredgingSuggestions error:', e); }
+    finally { setDredgingSuggestionsLoaded(true); }
   }, []);
 
   // 頁面載入時預先抓取建議清淤管段，供現況看板使用
@@ -3089,8 +3091,10 @@ export default function GisQueryPage() {
                 </div>
               </div>
 
-              {dredgingSuggestions.length === 0 ? (
+              {!dredgingSuggestionsLoaded ? (
                 <div style={{ fontSize: '0.72rem', color: '#9ca3af', textAlign: 'center', padding: '6px 0' }}>載入中…</div>
+              ) : dredgingSuggestions.length === 0 ? (
+                <div style={{ fontSize: '0.72rem', color: '#9ca3af', textAlign: 'center', padding: '6px 0' }}>暫無風險管段資料</div>
               ) : (
                 dredgingSuggestions
                   .filter((sg: any) => sg.priority === 'high' || sg.priority === 'medium')
