@@ -1014,8 +1014,12 @@ export default function GisQueryPage() {
     }
   }, []);
 
-  // 頁面載入時自動抓取天氣（讓 header 雨量即時顯示，不用等使用者點擊）
-  useEffect(() => { fetchWeather(); }, [fetchWeather]);
+  // 頁面載入時自動抓取天氣，並每 5 分鐘刷新一次
+  useEffect(() => {
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 300000);
+    return () => clearInterval(interval);
+  }, [fetchWeather]);
 
   // 頁面載入時預先抓取淹水熱點，避免使用者勾選時才 fetch 造成畫面跳動
   useEffect(() => { fetchFloodHotspots(); }, [fetchFloodHotspots]);
