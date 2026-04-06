@@ -555,6 +555,9 @@ export default function GisQueryPage() {
   const [showWeatherPanel, setShowWeatherPanel] = useState(false);
   const [showRainfallStations, setShowRainfallStations] = useState(false);
   const [weatherData, setWeatherData] = useState<WeatherState | null>(null);
+  // 雷達回波
+  const [showRadar, setShowRadar] = useState(false);
+  const [radarPath, setRadarPath] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
 
@@ -1023,6 +1026,25 @@ export default function GisQueryPage() {
 
   // 頁面載入時預先抓取淹水熱點，避免使用者勾選時才 fetch 造成畫面跳動
   useEffect(() => { fetchFloodHotspots(); }, [fetchFloodHotspots]);
+
+  // 雷達回波：從 RainViewer 取得最新時間戳
+  const fetchRadarTimestamp = useCallback(async () => {
+    try {
+      const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+      if (res.ok) {
+        const d = await res.json();
+        const latest = d?.radar?.past?.at(-1);
+        if (latest?.path) setRadarPath(latest.path);
+      }
+    } catch (e) { console.error('fetchRadarTimestamp error:', e); }
+  }, []);
+
+  useEffect(() => {
+    if (!showRadar) return;
+    fetchRadarTimestamp();
+    const interval = setInterval(fetchRadarTimestamp, 300000); // 每5分鐘更新
+    return () => clearInterval(interval);
+  }, [showRadar, fetchRadarTimestamp]);
 
   const handleAiAlertClick = (alert: AiAlert) => {
     if (!alert.layerKey) return;
@@ -1681,6 +1703,7 @@ export default function GisQueryPage() {
                     { checked: showLocal70, onChange: (v: boolean) => { setShowLocal70(v); if (v && waterMonitors.length === 0) fetchWaterMonitors(); }, label: '📍 縣府70處監測站', color: '#0ea5e9' },
                     { checked: showCctv, onChange: (v: boolean) => setShowCctv(v), label: `📹 水利署 CCTV${cctvData.length > 0 ? `（${cctvData.length}）` : ''}`, color: '#92400e' },
                     { checked: showGates, onChange: (v: boolean) => { setShowGates(v); if (v && gateStations.length === 0) fetchGates(); }, label: `🚧 IoW 閘門監測${gateStations.length > 0 ? `（${gateStations.length}）` : ''}`, color: '#b45309' },
+                    { checked: showRadar, onChange: (v: boolean) => setShowRadar(v), label: '🌩️ 雷達回波', color: '#7c3aed' },
                   ].map(({ checked, onChange, label, color }) => (
                     <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '5px', cursor: 'pointer', fontSize: '0.85rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
@@ -2116,6 +2139,16 @@ export default function GisQueryPage() {
                 )}
                 <MapBoundsHandler onBoundsChange={(b) => { fetchMapData(b); if (showHouseholds) fetchHouseholds(b); if (showPipelineConditions || showSedimentation) fetchPipelineConditions(b); }} />
 <MapFlyTo center={mapCenter} />
+
+                {/* 雷達回波疊加層（RainViewer） */}
+                {showRadar && radarPath && (
+                  <TileLayer
+                    url={`https://tilecache.rainviewer.com${radarPath}/256/{z}/{x}/{y}/6/1_1.png`}
+                    attribution='<a href="https://www.rainviewer.com" target="_blank">RainViewer</a>'
+                    opacity={0.6}
+                    zIndex={10}
+                  />
+                )}
 
                 {/* Pipeline Polylines */}
                 {mapPipelines
