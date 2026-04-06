@@ -2147,6 +2147,8 @@ export default function GisQueryPage() {
                     attribution='<a href="https://www.rainviewer.com" target="_blank">RainViewer</a>'
                     opacity={0.6}
                     zIndex={10}
+                    maxNativeZoom={12}
+                    errorTileUrl="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
                   />
                 )}
 
