@@ -120,6 +120,7 @@ const Polyline = loadDynamic(() => import('react-leaflet').then(m => m.Polyline)
 const Polygon = loadDynamic(() => import('react-leaflet').then(m => m.Polygon), { ssr: false });
 const Popup = loadDynamic(() => import('react-leaflet').then(m => m.Popup), { ssr: false });
 const Tooltip = loadDynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
+const ImageOverlay = loadDynamic(() => import('react-leaflet').then(m => m.ImageOverlay), { ssr: false });
 
 // Inner component for map event handling — must be a child of MapContainer
 // useMapEvents is a hook so it must be called inside a functional component that is a Leaflet child
@@ -557,7 +558,7 @@ export default function GisQueryPage() {
   const [weatherData, setWeatherData] = useState<WeatherState | null>(null);
   // 雷達回波
   const [showRadar, setShowRadar] = useState(false);
-  const [radarPath, setRadarPath] = useState<string | null>(null);
+  const [radarTs, setRadarTs] = useState<number>(0); // 用於 cache busting，每次更新時遞增
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
 
@@ -1027,24 +1028,18 @@ export default function GisQueryPage() {
   // 頁面載入時預先抓取淹水熱點，避免使用者勾選時才 fetch 造成畫面跳動
   useEffect(() => { fetchFloodHotspots(); }, [fetchFloodHotspots]);
 
-  // 雷達回波：從 RainViewer 取得最新時間戳
-  const fetchRadarTimestamp = useCallback(async () => {
-    try {
-      const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-      if (res.ok) {
-        const d = await res.json();
-        const latest = d?.radar?.past?.at(-1);
-        if (latest?.path) setRadarPath(latest.path);
-      }
-    } catch (e) { console.error('fetchRadarTimestamp error:', e); }
+  // 雷達回波：透過 /api/cwa-radar 代理 CWA 中央氣象署雷達合成圖
+  // 每次呼叫時遞增 radarTs，讓 ImageOverlay 強制重新載入圖片
+  const refreshRadar = useCallback(() => {
+    setRadarTs(Date.now());
   }, []);
 
   useEffect(() => {
     if (!showRadar) return;
-    fetchRadarTimestamp();
-    const interval = setInterval(fetchRadarTimestamp, 300000); // 每5分鐘更新
+    refreshRadar(); // 立即載入
+    const interval = setInterval(refreshRadar, 300000); // 每5分鐘更新
     return () => clearInterval(interval);
-  }, [showRadar, fetchRadarTimestamp]);
+  }, [showRadar, refreshRadar]);
 
   const handleAiAlertClick = (alert: AiAlert) => {
     if (!alert.layerKey) return;
@@ -2140,15 +2135,13 @@ export default function GisQueryPage() {
                 <MapBoundsHandler onBoundsChange={(b) => { fetchMapData(b); if (showHouseholds) fetchHouseholds(b); if (showPipelineConditions || showSedimentation) fetchPipelineConditions(b); }} />
 <MapFlyTo center={mapCenter} />
 
-                {/* 雷達回波疊加層（RainViewer） */}
-                {showRadar && radarPath && (
-                  <TileLayer
-                    url={`https://tilecache.rainviewer.com${radarPath}/256/{z}/{x}/{y}/6/1_1.png`}
-                    attribution='<a href="https://www.rainviewer.com" target="_blank">RainViewer</a>'
-                    opacity={0.6}
+                {/* 雷達回波疊加層（中央氣象署 CWA，每5分鐘更新） */}
+                {showRadar && radarTs > 0 && (
+                  <ImageOverlay
+                    url={`/api/cwa-radar?t=${radarTs}`}
+                    bounds={[[16.0, 113.5], [28.0, 127.0]]}
+                    opacity={0.55}
                     zIndex={10}
-                    maxNativeZoom={12}
-                    errorTileUrl="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
                   />
                 )}
 
