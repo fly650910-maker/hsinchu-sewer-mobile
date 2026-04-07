@@ -1028,8 +1028,8 @@ export default function GisQueryPage() {
   // 頁面載入時預先抓取淹水熱點，避免使用者勾選時才 fetch 造成畫面跳動
   useEffect(() => { fetchFloodHotspots(); }, [fetchFloodHotspots]);
 
-  // 雷達回波：透過 /api/cwa-radar 代理 CWA 中央氣象署雷達合成圖
-  // 每次呼叫時遞增 radarTs，讓 ImageOverlay 強制重新載入圖片
+  // 雷達回波：直接使用 CWA S3 靜態網址（O-A0058-001），每10分鐘覆寫同一URL
+  // 每次呼叫時更新 radarTs timestamp，讓 ImageOverlay 強制重新載入圖片
   const refreshRadar = useCallback(() => {
     setRadarTs(Date.now());
   }, []);
@@ -2138,8 +2138,8 @@ export default function GisQueryPage() {
                 {/* 雷達回波疊加層（中央氣象署 CWA，每5分鐘更新） */}
                 {showRadar && radarTs > 0 && (
                   <ImageOverlay
-                    url={`/api/cwa-radar?t=${radarTs}`}
-                    bounds={[[16.0, 113.5], [28.0, 127.0]]}
+                    url={`https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-001.png?t=${radarTs}`}
+                    bounds={[[17.75, 115.0], [29.25, 126.5]]}
                     opacity={0.55}
                     zIndex={10}
                   />
