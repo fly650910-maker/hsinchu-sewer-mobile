@@ -80,7 +80,7 @@ async function httpsGetRaw(urlStr: string, depth = 0): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = https.get(
       urlStr,
-      { rejectUnauthorized: false, timeout: 15000, headers: { 'Accept': 'application/json' } },
+      { rejectUnauthorized: false, timeout: 30000, headers: { 'Accept': 'application/json' } },
       async (res) => {
         try {
           if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
@@ -96,19 +96,33 @@ async function httpsGetRaw(urlStr: string, depth = 0): Promise<string> {
       }
     );
     req.on('error', (err) => reject(new Error(`HTTPS 請求失敗: ${err.message}`)));
-    req.on('timeout', () => { req.destroy(); reject(new Error('HTTPS 請求逾時（15秒）')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('HTTPS 請求逾時（30秒）')); });
     req.end();
   });
 }
+
+/** 簡易記憶體快取：key → { data, expireAt } */
+const _cache = new Map<string, { data: any; expireAt: number }>();
 
 async function fetchCWA(dataset: string, params: Record<string, string> = {}): Promise<any> {
   const url = new URL(`${CWA_BASE}/${dataset}`);
   url.searchParams.set('Authorization', API_KEY);
   url.searchParams.set('format', 'JSON');
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+
+  const cacheKey = url.toString();
+  const now = Date.now();
+  const cached = _cache.get(cacheKey);
+  // 快取有效期：10 分鐘（CWA 資料最快 10 分鐘更新一次）
+  if (cached && cached.expireAt > now) return cached.data;
+
   const text = await httpsGetRaw(url.toString());
-  try { return JSON.parse(text); }
+  let parsed: any;
+  try { parsed = JSON.parse(text); }
   catch { throw new Error(`CWA API ${dataset} 回傳非 JSON 內容：${text.slice(0, 300)}`); }
+
+  _cache.set(cacheKey, { data: parsed, expireAt: now + 10 * 60 * 1000 });
+  return parsed;
 }
 
 function calcRisk(pop6h: number | null, pop12h: number | null): RiskLevel {
@@ -213,10 +227,23 @@ export async function fetchRainfallStations(): Promise<RainfallStation[]> {
   } catch (err) { console.error('[CWA] 雨量站資料取得失敗：', err); return []; }
 }
 
+/** 上一次成功取得的完整天氣資料（跨請求快取，防止 CWA 臨時無回應時全空白） */
+let _lastSuccessfulWeather: WeatherData | null = null;
+
 export async function fetchAllWeatherData(): Promise<WeatherData> {
   const [warnings, forecasts, rainfallStations] = await Promise.all([fetchWarnings(), fetchForecasts(), fetchRainfallStations()]);
   const hasActiveWarning = warnings.length > 0;
-  return { fetchedAt: new Date().toISOString(), warnings, forecasts, rainfallStations, overallRisk: calcOverallRisk(hasActiveWarning, forecasts, rainfallStations), hasActiveWarning };
+
+  // 若三項都失敗（全為空且和舊資料相比明顯異常），使用上次成功的資料作為備援
+  const allEmpty = warnings.length === 0 && forecasts.every(f => f.weatherDesc === '無法取得') && rainfallStations.length === 0;
+  if (allEmpty && _lastSuccessfulWeather) {
+    console.warn('[CWA] 本次取得全部失敗，回傳上次快取資料（', _lastSuccessfulWeather.fetchedAt, '）');
+    return { ..._lastSuccessfulWeather, _stale: true } as WeatherData & { _stale?: boolean };
+  }
+
+  const result: WeatherData = { fetchedAt: new Date().toISOString(), warnings, forecasts, rainfallStations, overallRisk: calcOverallRisk(hasActiveWarning, forecasts, rainfallStations), hasActiveWarning };
+  if (!allEmpty) _lastSuccessfulWeather = result; // 只在有真實資料時更新快取
+  return result;
 }
 
 export async function fetchTidalForecast(): Promise<TidalForecast[]> {
