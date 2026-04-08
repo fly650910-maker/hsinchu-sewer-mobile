@@ -582,8 +582,14 @@ export default function GisQueryPage() {
   const [showDredging, setShowDredging] = useState(false);
   const [showDredging113, setShowDredging113] = useState(false);
   const [showDredging114, setShowDredging114] = useState(false);
+  const [showDredging115Rain, setShowDredging115Rain] = useState(false);
+  const [showDredging114Sewage, setShowDredging114Sewage] = useState(false);
+  const [showDredging115Sewage, setShowDredging115Sewage] = useState(false);
   const [dredgingYear, setDredgingYear] = useState<string>('all');
   const [dredgingRoutes, setDredgingRoutes] = useState<DredgingRoute[]>([]);
+  const [dredging115Rain, setDredging115Rain] = useState<DredgingRoute[]>([]);
+  const [dredging114Sewage, setDredging114Sewage] = useState<DredgingRoute[]>([]);
+  const [dredging115Sewage, setDredging115Sewage] = useState<DredgingRoute[]>([]);
   const [dredgingSummary, setDredgingSummary] = useState<any>(null);
 
   // 未來建議清淤管段（115年規劃）
@@ -1152,6 +1158,36 @@ export default function GisQueryPage() {
       }
     } catch (e) { console.error('fetchDredgingRoutes error:', e); }
   }, [dredgingYear]);
+
+  const fetchDredging115Rain = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/dredging-routes?year=115&sewer_type=雨水');
+      if (res.ok) {
+        const d = await res.json();
+        setDredging115Rain(d.routes || []);
+      }
+    } catch (e) { console.error('fetchDredging115Rain error:', e); }
+  }, []);
+
+  const fetchDredging114Sewage = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/dredging-routes?year=114&sewer_type=污水');
+      if (res.ok) {
+        const d = await res.json();
+        setDredging114Sewage(d.routes || []);
+      }
+    } catch (e) { console.error('fetchDredging114Sewage error:', e); }
+  }, []);
+
+  const fetchDredging115Sewage = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/dredging-routes?year=115&sewer_type=污水');
+      if (res.ok) {
+        const d = await res.json();
+        setDredging115Sewage(d.routes || []);
+      }
+    } catch (e) { console.error('fetchDredging115Sewage error:', e); }
+  }, []);
 
   const fetchNearbyReports = useCallback(async (manholeId: number, lat: number, lng: number) => {
     if (manholeNearbyReports[manholeId]) return; // 已載入過
@@ -1747,8 +1783,11 @@ export default function GisQueryPage() {
                 </div>
                 <div style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '1px' }}>
                   {[
-                    { checked: showDredging113, onChange: (v: boolean) => { setShowDredging113(v); setShowDredging(v || showDredging114); if (v) fetchDredgingRoutes('all'); }, label: '📅 113年已清淤管段', color: '#15803d' },
-                    { checked: showDredging114, onChange: (v: boolean) => { setShowDredging114(v); setShowDredging(showDredging113 || v); if (v) fetchDredgingRoutes('all'); }, label: '📅 114年已清淤管段', color: '#0d9488' },
+                    { checked: showDredging113, onChange: (v: boolean) => { setShowDredging113(v); setShowDredging(v || showDredging114); if (v) fetchDredgingRoutes('all'); }, label: '📅 113年雨水已清淤管段', color: '#15803d' },
+                    { checked: showDredging114, onChange: (v: boolean) => { setShowDredging114(v); setShowDredging(showDredging113 || v); if (v) fetchDredgingRoutes('all'); }, label: '📅 114年雨水已清淤管段', color: '#0d9488' },
+                    { checked: showDredging115Rain, onChange: (v: boolean) => { setShowDredging115Rain(v); if (v && dredging115Rain.length === 0) fetchDredging115Rain(); }, label: '📅 115年雨水清淤路段', color: '#0891b2' },
+                    { checked: showDredging114Sewage, onChange: (v: boolean) => { setShowDredging114Sewage(v); if (v && dredging114Sewage.length === 0) fetchDredging114Sewage(); }, label: '🚿 114年污水清淤路段', color: '#7c3aed' },
+                    { checked: showDredging115Sewage, onChange: (v: boolean) => { setShowDredging115Sewage(v); if (v && dredging115Sewage.length === 0) fetchDredging115Sewage(); }, label: '🚿 115年污水清淤路段', color: '#9333ea' },
                   ].map(({ checked, onChange, label, color }) => (
                     <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '3px 6px', borderRadius: '5px', cursor: 'pointer', fontSize: '0.85rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
@@ -2566,6 +2605,90 @@ export default function GisQueryPage() {
                       radius={10}
                       pathOptions={{ color: lineColor, fillColor: String(dr.year) === '114' ? '#2dd4bf' : '#22c55e', fillOpacity: 0.85, weight: 2 }}
                     >
+                      {popup}
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 115年雨水清淤路段 */}
+                {showDredging115Rain && dredging115Rain.map((dr) => {
+                  const popup = (
+                    <Popup>
+                      <div style={{ minWidth: '240px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#0891b2', fontSize: '1rem' }}>💧 {dr.road_name}</strong><br />
+                        📅 預計施作：{dr.work_date?.substring(0, 7)}<br />
+                        📏 預計清淤：<strong>{dr.total_length?.toLocaleString()} m</strong><br />
+                        🏗️ 管渠種類：{dr.culvert_types}<br />
+                        {dr.manhole_count > 0 && <>👁️ 預估人孔：{dr.manhole_count} 座<br /></>}
+                        <span style={{ fontSize: '0.75rem', color: '#0891b2' }}>115年度雨水清淤計畫</span>
+                      </div>
+                    </Popup>
+                  );
+                  if (dr.polyline && dr.polyline.length >= 2) {
+                    return (
+                      <Polyline key={`dr115r-${dr.id}`} positions={dr.polyline as [number, number][]} pathOptions={{ color: '#0891b2', weight: 5, opacity: 0.85, dashArray: '8 4' }}>
+                        {popup}
+                      </Polyline>
+                    );
+                  }
+                  return (
+                    <CircleMarker key={`dr115r-${dr.id}`} center={[dr.lat, dr.lng]} radius={9} pathOptions={{ color: '#0891b2', fillColor: '#67e8f9', fillOpacity: 0.85, weight: 2 }}>
+                      {popup}
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 114年污水清淤路段 */}
+                {showDredging114Sewage && dredging114Sewage.map((dr) => {
+                  const popup = (
+                    <Popup>
+                      <div style={{ minWidth: '240px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#7c3aed', fontSize: '1rem' }}>🚿 {dr.road_name}</strong><br />
+                        📅 施作日期：{dr.work_date?.substring(0, 7)}<br />
+                        📏 清淤長度：<strong>{dr.total_length?.toLocaleString()} m</strong><br />
+                        🏗️ 管種：{dr.culvert_types}<br />
+                        {dr.manhole_count > 0 && <>👁️ 人孔清淤：{dr.manhole_count} 座<br /></>}
+                        <span style={{ fontSize: '0.75rem', color: '#7c3aed' }}>114年度污水清淤</span>
+                      </div>
+                    </Popup>
+                  );
+                  if (dr.polyline && dr.polyline.length >= 2) {
+                    return (
+                      <Polyline key={`dr114sw-${dr.id}`} positions={dr.polyline as [number, number][]} pathOptions={{ color: '#7c3aed', weight: 5, opacity: 0.85 }}>
+                        {popup}
+                      </Polyline>
+                    );
+                  }
+                  return (
+                    <CircleMarker key={`dr114sw-${dr.id}`} center={[dr.lat, dr.lng]} radius={9} pathOptions={{ color: '#7c3aed', fillColor: '#c4b5fd', fillOpacity: 0.85, weight: 2 }}>
+                      {popup}
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 115年污水清淤路段 */}
+                {showDredging115Sewage && dredging115Sewage.map((dr) => {
+                  const popup = (
+                    <Popup>
+                      <div style={{ minWidth: '240px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#9333ea', fontSize: '1rem' }}>🚿 {dr.road_name}</strong><br />
+                        📅 預計施作：{dr.work_date?.substring(0, 7)}<br />
+                        📏 預計清淤：<strong>{dr.total_length?.toLocaleString()} m</strong><br />
+                        🏗️ 管種：{dr.culvert_types}<br />
+                        {dr.manhole_count > 0 && <>👁️ 預估人孔：{dr.manhole_count} 座<br /></>}
+                        <span style={{ fontSize: '0.75rem', color: '#9333ea' }}>115年度污水清淤計畫</span>
+                      </div>
+                    </Popup>
+                  );
+                  if (dr.polyline && dr.polyline.length >= 2) {
+                    return (
+                      <Polyline key={`dr115sw-${dr.id}`} positions={dr.polyline as [number, number][]} pathOptions={{ color: '#9333ea', weight: 5, opacity: 0.85, dashArray: '8 4' }}>
+                        {popup}
+                      </Polyline>
+                    );
+                  }
+                  return (
+                    <CircleMarker key={`dr115sw-${dr.id}`} center={[dr.lat, dr.lng]} radius={9} pathOptions={{ color: '#9333ea', fillColor: '#d8b4fe', fillOpacity: 0.85, weight: 2 }}>
                       {popup}
                     </CircleMarker>
                   );

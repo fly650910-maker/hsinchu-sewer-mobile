@@ -8,6 +8,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const year  = searchParams.get('year')  || 'all'
     const district = searchParams.get('district') || 'all'
+    const sewerType = searchParams.get('sewer_type') || 'all'
 
     const db = await getDb()
 
@@ -18,9 +19,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ routes: [], total: 0, summary: {} })
     }
 
+    // 確保 sewer_type 欄位存在（向下相容舊資料）
+    try {
+      await db.run("ALTER TABLE dredging_routes ADD COLUMN sewer_type TEXT DEFAULT '雨水'")
+    } catch (_) { /* 欄位已存在，忽略 */ }
+
     let sql = `
       SELECT id, year, work_date, district, road_name, culvert_type,
-             length_m, manhole_count, cistern_count, pipe_ids, lat, lng, polyline_json
+             length_m, manhole_count, cistern_count, pipe_ids, lat, lng, polyline_json,
+             COALESCE(sewer_type, '雨水') AS sewer_type
       FROM dredging_routes
       WHERE lat IS NOT NULL`
     const params: any[] = []
@@ -32,6 +39,10 @@ export async function GET(request: Request) {
     if (district !== 'all') {
       sql += ` AND district = ?`
       params.push(district)
+    }
+    if (sewerType !== 'all') {
+      sql += ` AND COALESCE(sewer_type, '雨水') = ?`
+      params.push(sewerType)
     }
 
     sql += ` ORDER BY work_date, road_name`
