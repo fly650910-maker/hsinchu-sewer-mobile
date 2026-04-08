@@ -60,11 +60,46 @@ export async function GET() {
       'SELECT * FROM sewage_inspection_115 ORDER BY sort_order, id'
     ) as any[]
 
+    // 查詢每條路段附近的實際污水管線幾何（半徑約 300m ≈ 0.003 度）
+    const RADIUS = 0.003
+    const pipelines_table_exists = await db.get(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='pipelines_unique'"
+    )
+
+    const routesWithPipes = await Promise.all(rows.map(async (r: any) => {
+      if (!pipelines_table_exists) return { ...r, nearby_pipes: [] }
+      try {
+        const pipes = await db.all(`
+          SELECT sewer_no, upstream_node, downstream_node, wgs84_coords, diameter, length
+          FROM pipelines_unique
+          WHERE wgs84_coords IS NOT NULL AND wgs84_coords != ''
+            AND system_type = '污水'
+            AND bbox_min_lat >= ? AND bbox_max_lat <= ?
+            AND bbox_min_lng >= ? AND bbox_max_lng <= ?
+          LIMIT 60
+        `, [
+          r.lat - RADIUS, r.lat + RADIUS,
+          r.lng - RADIUS, r.lng + RADIUS,
+        ]) as any[]
+
+        const nearby_pipes = pipes
+          .map((p: any) => {
+            try {
+              const coords: [number, number][] = JSON.parse(p.wgs84_coords)
+              return { sewer_no: p.sewer_no, upstream_node: p.upstream_node, downstream_node: p.downstream_node, diameter: p.diameter, length: p.length, coords }
+            } catch { return null }
+          })
+          .filter(Boolean)
+
+        return { ...r, nearby_pipes }
+      } catch { return { ...r, nearby_pipes: [] } }
+    }))
+
     const total = rows.length
-    const completed = rows.filter(r => r.status === 'completed').length
+    const completed = rows.filter((r: any) => r.status === 'completed').length
 
     return NextResponse.json({
-      routes: rows,
+      routes: routesWithPipes,
       total,
       completed,
       pending: total - completed,

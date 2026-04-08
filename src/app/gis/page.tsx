@@ -2,7 +2,7 @@
 // v2.1
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Database, Search, ChevronLeft, ChevronRight, Map, Layers, MessageSquareWarning, Plus, Trash2, CheckCircle, CheckCircle2, CircleDot, Clock, MapPin, X, Download, ShieldAlert, Briefcase, Wrench, Home, Waves, GitBranch, Cloud, AlertTriangle, Activity } from 'lucide-react';
 import { mapToEmicStatus } from '@/lib/cwa';
@@ -2716,51 +2716,61 @@ export default function GisQueryPage() {
                 })}
 
                 {/* 115年污水清淤路段 */}
-                {/* 115年污水清淤路段 = 巡檢完成的路段（實線綠色）+ 計畫中路段（虛線紫色）*/}
-                {showDredging115Sewage && inspectionRoutes115.filter(r => r.status === 'completed').map((r) => (
-                  <CircleMarker
-                    key={`insp-done-${r.id}`}
-                    center={[r.lat, r.lng]}
-                    radius={11}
-                    pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.9, weight: 2.5 }}
-                  >
+                {/* 115年污水清淤路段 — 用實際竣工管線幾何畫折線 */}
+                {showDredging115Sewage && inspectionRoutes115.map((r) => {
+                  const isDone = r.status === 'completed'
+                  const lineColor = isDone ? '#16a34a' : '#9333ea'
+                  const fillColor = isDone ? '#22c55e' : '#d8b4fe'
+                  const dashArray = isDone ? undefined : '8 4'
+                  const weight = isDone ? 5 : 4
+                  const popup = (
                     <Popup>
                       <div style={{ minWidth: '230px', lineHeight: '1.8' }}>
-                        <strong style={{ color: '#16a34a', fontSize: '1rem' }}>✅ {r.road_name}</strong><br />
+                        <strong style={{ color: lineColor, fontSize: '1rem' }}>{isDone ? '✅' : '🔲'} {r.road_name}</strong><br />
                         <span style={{ fontSize: '0.82rem', color: '#374151' }}>
                           📍 {r.address}<br />
-                          📅 巡檢完成：<strong>{r.completed_date}</strong><br />
+                          {isDone
+                            ? <><strong style={{ color: '#16a34a' }}>📅 巡檢完成：{r.completed_date}</strong><br /></>
+                            : <>📋 {r.reason}<br /></>
+                          }
                           🔁 歷年通報：{r.repeat_count} 次
                         </span>
-                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 8px', backgroundColor: '#f0fdf4', borderRadius: '4px', color: '#15803d', border: '1px solid #bbf7d0', fontWeight: '600' }}>
-                          115年污水巡檢已完成
+                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 8px', backgroundColor: isDone ? '#f0fdf4' : '#faf5ff', borderRadius: '4px', color: isDone ? '#15803d' : '#7c3aed', border: `1px solid ${isDone ? '#bbf7d0' : '#e9d5ff'}`, fontWeight: '600' }}>
+                          {isDone ? '115年污水巡檢已完成' : '115年污水巡檢待辦'}
                         </div>
                       </div>
                     </Popup>
-                  </CircleMarker>
-                ))}
-                {showDredging115Sewage && inspectionRoutes115.filter(r => r.status === 'pending').map((r) => (
-                  <CircleMarker
-                    key={`insp-pend-${r.id}`}
-                    center={[r.lat, r.lng]}
-                    radius={9}
-                    pathOptions={{ color: '#9333ea', fillColor: '#d8b4fe', fillOpacity: 0.75, weight: 2, dashArray: '4 2' }}
-                  >
-                    <Popup>
-                      <div style={{ minWidth: '220px', lineHeight: '1.8' }}>
-                        <strong style={{ color: '#9333ea', fontSize: '1rem' }}>🔲 {r.road_name}</strong><br />
-                        <span style={{ fontSize: '0.82rem', color: '#374151' }}>
-                          📍 {r.address}<br />
-                          🔁 歷年通報：{r.repeat_count} 次<br />
-                          📋 {r.reason}
-                        </span>
-                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 8px', backgroundColor: '#faf5ff', borderRadius: '4px', color: '#7c3aed', border: '1px solid #e9d5ff' }}>
-                          115年污水巡檢待辦
-                        </div>
-                      </div>
-                    </Popup>
-                  </CircleMarker>
-                ))}
+                  )
+                  // 有實際管線幾何 → 畫每條 Polyline
+                  if (r.nearby_pipes && r.nearby_pipes.length > 0) {
+                    return (
+                      <React.Fragment key={`insp-${r.id}`}>
+                        {r.nearby_pipes.map((pipe: any, pi: number) => (
+                          pipe.coords && pipe.coords.length >= 2 ? (
+                            <Polyline
+                              key={`insp-${r.id}-pipe-${pi}`}
+                              positions={pipe.coords as [number, number][]}
+                              pathOptions={{ color: lineColor, weight, opacity: isDone ? 0.95 : 0.7, dashArray }}
+                            >
+                              {pi === 0 ? popup : null}
+                            </Polyline>
+                          ) : null
+                        ))}
+                      </React.Fragment>
+                    )
+                  }
+                  // 無管線幾何 → 退回圓點
+                  return (
+                    <CircleMarker
+                      key={`insp-${r.id}`}
+                      center={[r.lat, r.lng]}
+                      radius={isDone ? 11 : 9}
+                      pathOptions={{ color: lineColor, fillColor, fillOpacity: isDone ? 0.9 : 0.75, weight: 2.5 }}
+                    >
+                      {popup}
+                    </CircleMarker>
+                  )
+                })}
                 {showDredging115Sewage && dredging115Sewage.map((dr) => {
                   const popup = (
                     <Popup>
