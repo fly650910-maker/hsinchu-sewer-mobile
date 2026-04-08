@@ -603,6 +603,12 @@ export default function GisQueryPage() {
   const [sewageDredgingSuggestions, setSewageDredgingSuggestions] = useState<any[]>([]);
   const [sewageDredgingMeta, setSewageDredgingMeta] = useState<{ budget_total_wan: number; budget_used_wan: number; budget_remaining_wan: number; total_length_m: number } | null>(null);
 
+  // 115年污水巡檢路段
+  const [showInspectionPanel, setShowInspectionPanel] = useState(false);
+  const [inspectionRoutes115, setInspectionRoutes115] = useState<any[]>([]);
+  const [inspectionProgress, setInspectionProgress] = useState<{ total: number; completed: number; progress_pct: number } | null>(null);
+  const [inspectionUpdating, setInspectionUpdating] = useState<string | null>(null);
+
   // 塞管通報（開口契約歷史紀錄）
   const [pipeReports, setPipeReports] = useState<PipeReport[]>([]);
   const [pipeReportFilter, setPipeReportFilter] = useState<string>('all');
@@ -1158,6 +1164,42 @@ export default function GisQueryPage() {
       }
     } catch (e) { console.error('fetchDredgingRoutes error:', e); }
   }, [dredgingYear]);
+
+  const fetchInspectionRoutes115 = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/sewage-inspection-115');
+      if (res.ok) {
+        const d = await res.json();
+        setInspectionRoutes115(d.routes || []);
+        setInspectionProgress({ total: d.total, completed: d.completed, progress_pct: d.progress_pct });
+      }
+    } catch (e) { console.error('fetchInspectionRoutes115 error:', e); }
+  }, []);
+
+  const toggleInspectionStatus = useCallback(async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
+    setInspectionUpdating(id);
+    try {
+      const res = await fetch('/api/gis/sewage-inspection-115', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: newStatus }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setInspectionRoutes115(prev =>
+          prev.map(r => r.id === id ? { ...r, ...d.route } : r)
+        );
+        // 更新進度
+        setInspectionRoutes115(prev => {
+          const completed = prev.filter(r => r.id === id ? newStatus === 'completed' : r.status === 'completed').length;
+          setInspectionProgress({ total: prev.length, completed, progress_pct: Math.round((completed / prev.length) * 100) });
+          return prev;
+        });
+      }
+    } catch (e) { console.error('toggleInspectionStatus error:', e); }
+    finally { setInspectionUpdating(null); }
+  }, []);
 
   const fetchDredging115Rain = useCallback(async () => {
     try {
@@ -2744,6 +2786,30 @@ export default function GisQueryPage() {
                   );
                 })}
 
+                {/* 115年污水巡檢路段 — 已完成者顯示綠色 */}
+                {showInspectionPanel && inspectionRoutes115.filter(r => r.status === 'completed').map((r) => (
+                  <CircleMarker
+                    key={`insp-${r.id}`}
+                    center={[r.lat, r.lng]}
+                    radius={12}
+                    pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.88, weight: 2.5 }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '220px', lineHeight: '1.8' }}>
+                        <strong style={{ color: '#16a34a', fontSize: '1rem' }}>✅ {r.road_name}</strong><br />
+                        <span style={{ fontSize: '0.82rem', color: '#374151' }}>
+                          📍 {r.address}<br />
+                          📅 完成日期：{r.completed_date || '—'}<br />
+                          🔁 歷年通報：{r.repeat_count} 次
+                        </span>
+                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 7px', backgroundColor: '#f0fdf4', borderRadius: '4px', color: '#15803d', border: '1px solid #bbf7d0' }}>
+                          115年巡檢已完成
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
                 {/* 115年污水建議清淤管段 — 依塞管熱點分析 */}
                 {showSewageDredgingFuture && sewageDredgingSuggestions.map((sg) => {
                   const priorityColor = sg.priority === 'high' ? '#7c3aed' : sg.priority === 'medium' ? '#a855f7' : '#c084fc';
@@ -3287,6 +3353,105 @@ export default function GisQueryPage() {
             <div className="gis-right-panel" style={{ backgroundColor: 'white', borderLeft: '1px solid #e2e8f0', overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#374151', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Activity size={14} color="#0ea5e9" /> 現況看板
+              </div>
+
+              {/* ── 115年污水巡檢路段 ── */}
+              <div style={{ border: '1.5px solid #7c3aed', borderRadius: '8px', overflow: 'hidden' }}>
+                {/* 標題列（點擊展開/收合）*/}
+                <div
+                  onClick={() => { setShowInspectionPanel(v => !v); if (!showInspectionPanel && inspectionRoutes115.length === 0) fetchInspectionRoutes115(); }}
+                  style={{ backgroundColor: showInspectionPanel ? '#7c3aed' : '#f5f3ff', padding: '7px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.8rem' }}>🚿</span>
+                    <span style={{ fontSize: '0.78rem', fontWeight: '700', color: showInspectionPanel ? 'white' : '#7c3aed' }}>115年污水預計巡檢路段</span>
+                    {inspectionProgress && (
+                      <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', backgroundColor: inspectionProgress.completed === inspectionProgress.total ? '#22c55e' : '#e9d5ff', color: inspectionProgress.completed === inspectionProgress.total ? 'white' : '#7c3aed', fontWeight: '700' }}>
+                        {inspectionProgress.completed}/{inspectionProgress.total}
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: showInspectionPanel ? 'white' : '#7c3aed' }}>{showInspectionPanel ? '▲' : '▼'}</span>
+                </div>
+
+                {showInspectionPanel && (
+                  <div style={{ padding: '0' }}>
+                    {/* 進度條 */}
+                    {inspectionProgress && (
+                      <div style={{ padding: '6px 10px 4px', backgroundColor: '#faf5ff' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#7c3aed', marginBottom: '3px' }}>
+                          <span>巡檢進度</span>
+                          <strong>{inspectionProgress.progress_pct}%（{inspectionProgress.completed}/{inspectionProgress.total} 條）</strong>
+                        </div>
+                        <div style={{ height: '5px', backgroundColor: '#e9d5ff', borderRadius: '3px' }}>
+                          <div style={{ height: '100%', borderRadius: '3px', backgroundColor: inspectionProgress.completed === inspectionProgress.total ? '#22c55e' : '#7c3aed', width: `${inspectionProgress.progress_pct}%`, transition: 'width 0.4s ease' }} />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 巡檢清單表格 */}
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f3e8ff' }}>
+                            <th style={{ padding: '5px 6px', textAlign: 'left', color: '#6b21a8', fontWeight: '700', whiteSpace: 'nowrap', borderBottom: '1px solid #e9d5ff' }}>地區</th>
+                            <th style={{ padding: '5px 6px', textAlign: 'left', color: '#6b21a8', fontWeight: '700', borderBottom: '1px solid #e9d5ff' }}>路段</th>
+                            <th style={{ padding: '5px 4px', textAlign: 'center', color: '#6b21a8', fontWeight: '700', whiteSpace: 'nowrap', borderBottom: '1px solid #e9d5ff' }}>通報</th>
+                            <th style={{ padding: '5px 4px', textAlign: 'center', color: '#6b21a8', fontWeight: '700', borderBottom: '1px solid #e9d5ff' }}>完成</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inspectionRoutes115.map((r, idx) => {
+                            const isDone = r.status === 'completed';
+                            const isUpdating = inspectionUpdating === r.id;
+                            return (
+                              <tr key={r.id} style={{ backgroundColor: isDone ? '#f0fdf4' : idx % 2 === 0 ? 'white' : '#faf5ff', borderBottom: '1px solid #f3e8ff' }}>
+                                <td style={{ padding: '5px 6px', color: '#374151', whiteSpace: 'nowrap' }}>
+                                  <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: r.district === '竹東' ? '#fef3c7' : '#e0f2fe', color: r.district === '竹東' ? '#92400e' : '#0369a1', fontWeight: '600' }}>{r.district}</span>
+                                </td>
+                                <td style={{ padding: '5px 6px', color: isDone ? '#15803d' : '#374151' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    {isDone && <span style={{ color: '#22c55e', fontWeight: '700' }}>✓</span>}
+                                    <button
+                                      onClick={() => { setMapCenter([r.lat, r.lng]); setClickCoords([r.lat, r.lng]); }}
+                                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: isDone ? '#15803d' : '#7c3aed', textAlign: 'left', fontWeight: isDone ? '600' : '400', textDecoration: isDone ? 'none' : 'underline', fontSize: '0.72rem' }}
+                                      title="點擊定位到地圖"
+                                    >
+                                      {r.road_name.replace(/^竹[東北]-/, '')}
+                                    </button>
+                                  </div>
+                                  {isDone && r.completed_date && (
+                                    <div style={{ fontSize: '0.6rem', color: '#6b7280', marginTop: '1px' }}>{r.completed_date}</div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '5px 4px', textAlign: 'center', color: '#ef4444', fontWeight: '700' }}>{r.repeat_count}次</td>
+                                <td style={{ padding: '5px 4px', textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => toggleInspectionStatus(r.id, r.status)}
+                                    disabled={isUpdating}
+                                    title={isDone ? '點擊取消完成' : '點擊標記為已完成'}
+                                    style={{
+                                      width: '22px', height: '22px', borderRadius: '4px', border: isDone ? '2px solid #22c55e' : '2px solid #d1d5db',
+                                      backgroundColor: isDone ? '#22c55e' : 'white', color: isDone ? 'white' : '#9ca3af',
+                                      cursor: isUpdating ? 'wait' : 'pointer', fontSize: '0.75rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                      transition: 'all 0.2s',
+                                    }}
+                                  >
+                                    {isUpdating ? '…' : isDone ? '✓' : ''}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {inspectionRoutes115.length === 0 && (
+                      <div style={{ padding: '12px', textAlign: 'center', color: '#9ca3af', fontSize: '0.72rem' }}>載入中…</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* ── 雨量超標即時警報（當雨量超門檻時才顯示）── */}
