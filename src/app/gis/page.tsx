@@ -1745,7 +1745,7 @@ export default function GisQueryPage() {
               {[
                 { checked: showWaterBank, onChange: (v: boolean) => { setShowWaterBank(v); if (v && waterBankNodes.length === 0) fetchWaterBankNodes(); }, label: '💧 水銀行節點', color: '#0ea5e9' },
                 { checked: showInspectionSites, onChange: (v: boolean) => { setShowInspectionSites(v); if (v && inspectionSites.length === 0) fetchInspectionSites(); }, label: '📋 評鑑地點', color: '#7c3aed' },
-                { checked: showDredgingFuture, onChange: (v: boolean) => { setShowDredgingFuture(v); if (v && dredgingSuggestions.length === 0) fetchDredgingSuggestions(); }, label: '🔮 115年建議清淤管段', color: '#f97316' },
+                { checked: showDredgingFuture, onChange: (v: boolean) => { setShowDredgingFuture(v); if (v && dredgingSuggestions.length === 0) fetchDredgingSuggestions(); }, label: '🔮 115年雨水建議清淤管段', color: '#f97316' },
               ].map(({ checked, onChange, label, color }) => (
                 <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                   <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
