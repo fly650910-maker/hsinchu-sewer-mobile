@@ -1836,7 +1836,7 @@ export default function GisQueryPage() {
                     { checked: showDredging114, onChange: (v: boolean) => { setShowDredging114(v); setShowDredging(showDredging113 || v); if (v) fetchDredgingRoutes('all'); }, label: '📅 114年雨水已清淤管段', color: '#0d9488' },
                     { checked: showDredging115Rain, onChange: (v: boolean) => { setShowDredging115Rain(v); if (v && dredging115Rain.length === 0) fetchDredging115Rain(); }, label: '📅 115年雨水清淤路段', color: '#0891b2' },
                     { checked: showDredging114Sewage, onChange: (v: boolean) => { setShowDredging114Sewage(v); if (v && dredging114Sewage.length === 0) fetchDredging114Sewage(); }, label: '🚿 114年污水清淤路段', color: '#7c3aed' },
-                    { checked: showDredging115Sewage, onChange: (v: boolean) => { setShowDredging115Sewage(v); if (v && dredging115Sewage.length === 0) fetchDredging115Sewage(); }, label: '🚿 115年污水清淤路段', color: '#9333ea' },
+                    { checked: showDredging115Sewage, onChange: (v: boolean) => { setShowDredging115Sewage(v); if (v) { if (dredging115Sewage.length === 0) fetchDredging115Sewage(); if (inspectionRoutes115.length === 0) fetchInspectionRoutes115(); } }, label: '🚿 115年污水清淤路段', color: '#9333ea' },
                   ].map(({ checked, onChange, label, color }) => (
                     <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '3px 6px', borderRadius: '5px', cursor: 'pointer', fontSize: '0.85rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
@@ -2716,6 +2716,51 @@ export default function GisQueryPage() {
                 })}
 
                 {/* 115年污水清淤路段 */}
+                {/* 115年污水清淤路段 = 巡檢完成的路段（實線綠色）+ 計畫中路段（虛線紫色）*/}
+                {showDredging115Sewage && inspectionRoutes115.filter(r => r.status === 'completed').map((r) => (
+                  <CircleMarker
+                    key={`insp-done-${r.id}`}
+                    center={[r.lat, r.lng]}
+                    radius={11}
+                    pathOptions={{ color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.9, weight: 2.5 }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '230px', lineHeight: '1.8' }}>
+                        <strong style={{ color: '#16a34a', fontSize: '1rem' }}>✅ {r.road_name}</strong><br />
+                        <span style={{ fontSize: '0.82rem', color: '#374151' }}>
+                          📍 {r.address}<br />
+                          📅 巡檢完成：<strong>{r.completed_date}</strong><br />
+                          🔁 歷年通報：{r.repeat_count} 次
+                        </span>
+                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 8px', backgroundColor: '#f0fdf4', borderRadius: '4px', color: '#15803d', border: '1px solid #bbf7d0', fontWeight: '600' }}>
+                          115年污水巡檢已完成
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+                {showDredging115Sewage && inspectionRoutes115.filter(r => r.status === 'pending').map((r) => (
+                  <CircleMarker
+                    key={`insp-pend-${r.id}`}
+                    center={[r.lat, r.lng]}
+                    radius={9}
+                    pathOptions={{ color: '#9333ea', fillColor: '#d8b4fe', fillOpacity: 0.75, weight: 2, dashArray: '4 2' }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '220px', lineHeight: '1.8' }}>
+                        <strong style={{ color: '#9333ea', fontSize: '1rem' }}>🔲 {r.road_name}</strong><br />
+                        <span style={{ fontSize: '0.82rem', color: '#374151' }}>
+                          📍 {r.address}<br />
+                          🔁 歷年通報：{r.repeat_count} 次<br />
+                          📋 {r.reason}
+                        </span>
+                        <div style={{ marginTop: '6px', fontSize: '0.7rem', padding: '3px 8px', backgroundColor: '#faf5ff', borderRadius: '4px', color: '#7c3aed', border: '1px solid #e9d5ff' }}>
+                          115年污水巡檢待辦
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
                 {showDredging115Sewage && dredging115Sewage.map((dr) => {
                   const popup = (
                     <Popup>
