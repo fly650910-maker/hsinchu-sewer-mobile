@@ -74,12 +74,12 @@ export async function GET() {
           FROM pipelines_unique
           WHERE wgs84_coords IS NOT NULL AND wgs84_coords != ''
             AND system_type = '污水'
-            AND bbox_min_lat >= ? AND bbox_max_lat <= ?
-            AND bbox_min_lng >= ? AND bbox_max_lng <= ?
+            AND bbox_min_lat <= ? AND bbox_max_lat >= ?
+            AND bbox_min_lng <= ? AND bbox_max_lng >= ?
           LIMIT 60
         `, [
-          r.lat - RADIUS, r.lat + RADIUS,
-          r.lng - RADIUS, r.lng + RADIUS,
+          r.lat + RADIUS, r.lat - RADIUS,
+          r.lng + RADIUS, r.lng - RADIUS,
         ]) as any[]
 
         const nearby_pipes = pipes
