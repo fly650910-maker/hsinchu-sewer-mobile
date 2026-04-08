@@ -592,6 +592,11 @@ export default function GisQueryPage() {
   const [dredgingSuggestionsLoaded, setDredgingSuggestionsLoaded] = useState(false);
   const [dredgingMeta, setDredgingMeta] = useState<{ budget_total_wan: number; budget_used_wan: number; budget_remaining_wan: number; total_length_m: number } | null>(null);
 
+  // 115年污水建議清淤管段（依塞管熱點分析）
+  const [showSewageDredgingFuture, setShowSewageDredgingFuture] = useState(false);
+  const [sewageDredgingSuggestions, setSewageDredgingSuggestions] = useState<any[]>([]);
+  const [sewageDredgingMeta, setSewageDredgingMeta] = useState<{ budget_total_wan: number; budget_used_wan: number; budget_remaining_wan: number; total_length_m: number } | null>(null);
+
   // 塞管通報（開口契約歷史紀錄）
   const [pipeReports, setPipeReports] = useState<PipeReport[]>([]);
   const [pipeReportFilter, setPipeReportFilter] = useState<string>('all');
@@ -1028,8 +1033,8 @@ export default function GisQueryPage() {
   // 頁面載入時預先抓取淹水熱點，避免使用者勾選時才 fetch 造成畫面跳動
   useEffect(() => { fetchFloodHotspots(); }, [fetchFloodHotspots]);
 
-  // 雷達回波：直接使用 CWA S3 靜態網址（O-A0058-001），每10分鐘覆寫同一URL
-  // 每次呼叫時更新 radarTs timestamp，讓 ImageOverlay 強制重新載入圖片
+  // 雷達回波：透過 /api/cwa-radar 代理 CWA 中央氣象署雷達合成圖
+  // 每次呼叫時遞增 radarTs，讓 ImageOverlay 強制重新載入圖片
   const refreshRadar = useCallback(() => {
     setRadarTs(Date.now());
   }, []);
@@ -1086,6 +1091,22 @@ export default function GisQueryPage() {
       }
     } catch (e) { console.error('fetchDredgingSuggestions error:', e); }
     finally { setDredgingSuggestionsLoaded(true); }
+  }, []);
+
+  const fetchSewageDredgingSuggestions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/sewage-dredging-suggestion');
+      if (res.ok) {
+        const d = await res.json();
+        setSewageDredgingSuggestions(d.suggestions || []);
+        setSewageDredgingMeta({
+          budget_total_wan: d.budget_total_wan ?? 800,
+          budget_used_wan: d.budget_used_wan ?? 0,
+          budget_remaining_wan: d.budget_remaining_wan ?? 0,
+          total_length_m: d.total_length_m ?? 0,
+        });
+      }
+    } catch (e) { console.error('fetchSewageDredgingSuggestions error:', e); }
   }, []);
 
   // 頁面載入時預先抓取建議清淤管段，供現況看板使用
@@ -1746,16 +1767,17 @@ export default function GisQueryPage() {
                 { checked: showWaterBank, onChange: (v: boolean) => { setShowWaterBank(v); if (v && waterBankNodes.length === 0) fetchWaterBankNodes(); }, label: '💧 水銀行節點', color: '#0ea5e9' },
                 { checked: showInspectionSites, onChange: (v: boolean) => { setShowInspectionSites(v); if (v && inspectionSites.length === 0) fetchInspectionSites(); }, label: '📋 評鑑地點', color: '#7c3aed' },
                 { checked: showDredgingFuture, onChange: (v: boolean) => { setShowDredgingFuture(v); if (v && dredgingSuggestions.length === 0) fetchDredgingSuggestions(); }, label: '🔮 115年雨水建議清淤管段', color: '#f97316' },
+                { checked: showSewageDredgingFuture, onChange: (v: boolean) => { setShowSewageDredgingFuture(v); if (v && sewageDredgingSuggestions.length === 0) fetchSewageDredgingSuggestions(); }, label: '🚿 115年污水建議清淤管段', color: '#7c3aed' },
               ].map(({ checked, onChange, label, color }) => (
                 <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.88rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
                   <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
                   <span>{label}</span>
                 </label>
               ))}
-              {/* 115年預算資訊 — 僅在勾選且已載入時顯示 */}
+              {/* 115年雨水清淤預算資訊 */}
               {showDredgingFuture && dredgingMeta && (
                 <div style={{ padding: '8px 8px 6px', margin: '2px 0', backgroundColor: 'rgba(249,115,22,0.07)', borderRadius: '8px', border: '1px solid rgba(249,115,22,0.2)' }}>
-                  <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#ea580c', marginBottom: '5px' }}>💰 115年清淤預算規劃</div>
+                  <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#ea580c', marginBottom: '5px' }}>💰 115年雨水清淤預算規劃</div>
                   <div style={{ fontSize: '0.72rem', color: '#78350f', lineHeight: '1.7' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>總預算</span><strong>{dredgingMeta.budget_total_wan.toLocaleString()} 萬</strong>
@@ -1770,12 +1792,37 @@ export default function GisQueryPage() {
                       <span>路段數</span><strong>{dredgingSuggestions.length} 條</strong>
                     </div>
                   </div>
-                  {/* Budget bar */}
                   <div style={{ marginTop: '6px', height: '6px', borderRadius: '3px', backgroundColor: 'rgba(249,115,22,0.15)', overflow: 'hidden' }}>
                     <div style={{ height: '100%', borderRadius: '3px', backgroundColor: '#f97316', width: `${Math.min(100, (dredgingMeta.budget_used_wan / dredgingMeta.budget_total_wan) * 100)}%`, transition: 'width 0.6s ease' }} />
                   </div>
                   <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '3px', textAlign: 'right' }}>
                     {((dredgingMeta.budget_used_wan / dredgingMeta.budget_total_wan) * 100).toFixed(0)}% 已分配
+                  </div>
+                </div>
+              )}
+              {/* 115年污水清淤預算資訊 */}
+              {showSewageDredgingFuture && sewageDredgingMeta && (
+                <div style={{ padding: '8px 8px 6px', margin: '2px 0', backgroundColor: 'rgba(124,58,237,0.07)', borderRadius: '8px', border: '1px solid rgba(124,58,237,0.2)' }}>
+                  <div style={{ fontSize: '0.68rem', fontWeight: '700', color: '#7c3aed', marginBottom: '5px' }}>💰 115年污水清淤預算規劃</div>
+                  <div style={{ fontSize: '0.72rem', color: '#4c1d95', lineHeight: '1.7' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>總預算</span><strong>{sewageDredgingMeta.budget_total_wan.toLocaleString()} 萬</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>規劃使用</span><strong style={{ color: '#dc2626' }}>{sewageDredgingMeta.budget_used_wan.toLocaleString()} 萬</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>預計清淤</span><strong>{(sewageDredgingMeta.total_length_m / 1000).toFixed(1)} km</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>熱點路段</span><strong>{sewageDredgingSuggestions.length} 條</strong>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '6px', height: '6px', borderRadius: '3px', backgroundColor: 'rgba(124,58,237,0.15)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', borderRadius: '3px', backgroundColor: '#7c3aed', width: `${Math.min(100, (sewageDredgingMeta.budget_used_wan / sewageDredgingMeta.budget_total_wan) * 100)}%`, transition: 'width 0.6s ease' }} />
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '3px', textAlign: 'right' }}>
+                    {((sewageDredgingMeta.budget_used_wan / sewageDredgingMeta.budget_total_wan) * 100).toFixed(0)}% 已分配
                   </div>
                 </div>
               )}
@@ -2135,7 +2182,7 @@ export default function GisQueryPage() {
                 <MapBoundsHandler onBoundsChange={(b) => { fetchMapData(b); if (showHouseholds) fetchHouseholds(b); if (showPipelineConditions || showSedimentation) fetchPipelineConditions(b); }} />
 <MapFlyTo center={mapCenter} />
 
-                {/* 雷達回波疊加層（中央氣象署 CWA，每5分鐘更新） */}
+                {/* 雷達回波疊加層（中央氣象署 CWA O-A0058-001，每5分鐘更新） */}
                 {showRadar && radarTs > 0 && (
                   <ImageOverlay
                     url={`https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-001.png?t=${radarTs}`}
@@ -2569,6 +2616,56 @@ export default function GisQueryPage() {
                       <Tooltip sticky direction="top" offset={[0, -10]}>
                         <span style={{ fontWeight: 700, color: priorityColor }}>{sg.road_name}</span><br />
                         <span style={{ fontSize: '0.78rem' }}>{sg.district} · {sg.culvert_type} · {sg.estimated_length_m}m · <strong>{sg.total_cost}萬</strong></span>
+                      </Tooltip>
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 115年污水建議清淤管段 — 依塞管熱點分析 */}
+                {showSewageDredgingFuture && sewageDredgingSuggestions.map((sg) => {
+                  const priorityColor = sg.priority === 'high' ? '#7c3aed' : sg.priority === 'medium' ? '#a855f7' : '#c084fc';
+                  const priorityLabel = sg.priority === 'high' ? '高優先' : sg.priority === 'medium' ? '中優先' : '低優先';
+                  const popup = (
+                    <Popup>
+                      <div style={{ minWidth: '290px', lineHeight: '1.8', fontFamily: 'system-ui, sans-serif' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                          <strong style={{ color: priorityColor, fontSize: '0.95rem' }}>🚿 {sg.road_name}</strong>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: `${priorityColor}22`, color: priorityColor, border: `1px solid ${priorityColor}44` }}>{priorityLabel}</span>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: '#374151', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 12px' }}>
+                          <span style={{ color: '#6b7280' }}>地區</span><strong>{sg.district}</strong>
+                          <span style={{ color: '#6b7280' }}>管種</span><span>{sg.pipe_type}</span>
+                          <span style={{ color: '#6b7280' }}>清疏長度</span><strong>{sg.estimated_length_m.toLocaleString()} m</strong>
+                          <span style={{ color: '#6b7280' }}>人孔清疏</span><span>{sg.manhole_count} 座</span>
+                          <span style={{ color: '#6b7280' }}>歷年通報</span><strong style={{ color: '#dc2626' }}>{sg.repeat_count} 次</strong>
+                          <span style={{ color: '#6b7280' }}>估算費用</span><strong style={{ color: '#dc2626' }}>{sg.total_cost} 萬元</strong>
+                          <span style={{ color: '#6b7280' }}>累計預算</span><span>{sg.cumulative_cost} 萬 / 800 萬</span>
+                        </div>
+                        {sg.basis && sg.basis.length > 0 && (
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', margin: '8px 0 4px' }}>
+                            {sg.basis.map((b: string, i: number) => (
+                              <span key={i} style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '6px', backgroundColor: '#faf5ff', color: '#7c3aed', border: '1px solid #e9d5ff' }}>{b}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{ marginTop: '6px', padding: '8px', backgroundColor: '#faf5ff', borderRadius: '8px', fontSize: '0.79rem', color: '#4c1d95', lineHeight: '1.55' }}>
+                          💡 {sg.reason}
+                        </div>
+                        <div style={{ marginTop: '6px', fontSize: '0.7rem', color: '#9ca3af' }}>優先評分：{sg.score} 分 · 依110～114年塞管熱點分析</div>
+                      </div>
+                    </Popup>
+                  );
+                  return (
+                    <CircleMarker
+                      key={`swsug-${sg.id}`}
+                      center={[sg.lat, sg.lng]}
+                      radius={11}
+                      pathOptions={{ color: priorityColor, fillColor: priorityColor, fillOpacity: 0.7, weight: 2.5, dashArray: '4 3' }}
+                    >
+                      {popup}
+                      <Tooltip sticky direction="top" offset={[0, -10]}>
+                        <span style={{ fontWeight: 700, color: priorityColor }}>{sg.road_name}</span><br />
+                        <span style={{ fontSize: '0.78rem' }}>{sg.district} · {sg.pipe_type} · 通報{sg.repeat_count}次 · <strong>{sg.total_cost}萬</strong></span>
                       </Tooltip>
                     </CircleMarker>
                   );
