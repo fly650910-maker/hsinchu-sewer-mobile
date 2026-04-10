@@ -611,6 +611,7 @@ export default function GisQueryPage() {
   const [inspectionUpdating, setInspectionUpdating] = useState<string | null>(null);
 
   // 八標竣工設施（竣工人孔 / 陰井 / 連接管）
+  const [showBiaoGroup,      setShowBiaoGroup]      = useState(false);  // 群組展開
   const [showBiaoManhole,    setShowBiaoManhole]    = useState(false);
   const [showBiaoYinjing,    setShowBiaoYinjing]    = useState(false);
   const [showBiaoConnector,  setShowBiaoConnector]  = useState(false);
@@ -1754,9 +1755,6 @@ export default function GisQueryPage() {
                 { checked: showSewagePipelines, onChange: (v: boolean) => { setShowSewagePipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 污水竣工管線', color: '#3b82f6' },
                 { checked: showAlleyPipelines, onChange: (v: boolean) => { setShowAlleyPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔷 巷道連接管', color: '#06b6d4' },
                 { checked: showHouseholds, onChange: (v: boolean) => { setShowHouseholds(v); if (v && mapHouseholds.length === 0) fetchHouseholds(); }, label: '🏠 用戶接管資料', color: '#eab308' },
-                { checked: showBiaoManhole,   onChange: (v: boolean) => { setShowBiaoManhole(v);   if (v) fetchBiaoFacilities(); }, label: '🟠 八標-竣工人孔', color: '#ea580c' },
-                { checked: showBiaoYinjing,   onChange: (v: boolean) => { setShowBiaoYinjing(v);   if (v) fetchBiaoFacilities(); }, label: '🟡 八標-陰井',     color: '#ca8a04' },
-                { checked: showBiaoConnector, onChange: (v: boolean) => { setShowBiaoConnector(v); if (v) fetchBiaoFacilities(); }, label: '🔵 八標-連接管',   color: '#0891b2' },
               ] : [
                 { checked: showManholes, onChange: (v: boolean) => { setShowManholes(v); if (!v && selectedAsset?.type === 'manhole') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🟣 人孔 / 陰井', color: '#8b5cf6' },
                 { checked: showPipelines, onChange: (v: boolean) => { setShowPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 管線網絡', color: '#3b82f6' },
@@ -1767,6 +1765,33 @@ export default function GisQueryPage() {
                   <span>{label}</span>
                 </label>
               ))}
+              {/* 八標竣工設施 — 可展開群組（僅污水模式顯示）*/}
+              {systemType === '污水' && (
+                <div style={{ marginTop: '2px' }}>
+                  <button
+                    onClick={() => setShowBiaoGroup(v => !v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '5px 6px', borderRadius: '6px', border: 'none', background: showBiaoGroup ? '#ea580c22' : 'transparent', cursor: 'pointer', fontSize: '0.88rem', color: '#1e293b', fontWeight: showBiaoGroup ? 600 : 400, transition: 'background 0.15s' }}
+                  >
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', transition: 'transform 0.2s', display: 'inline-block', transform: showBiaoGroup ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                    <span>🔶 八標竣工設施</span>
+                    {biaoLoading && <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>載入中…</span>}
+                  </button>
+                  {showBiaoGroup && (
+                    <div style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '1px', marginTop: '1px' }}>
+                      {[
+                        { checked: showBiaoManhole,   onChange: (v: boolean) => { setShowBiaoManhole(v);   if (v) fetchBiaoFacilities(); }, label: '🟠 竣工人孔', color: '#ea580c' },
+                        { checked: showBiaoYinjing,   onChange: (v: boolean) => { setShowBiaoYinjing(v);   if (v) fetchBiaoFacilities(); }, label: '🟡 陰井',     color: '#ca8a04' },
+                        { checked: showBiaoConnector, onChange: (v: boolean) => { setShowBiaoConnector(v); if (v) fetchBiaoFacilities(); }, label: '🔵 連接管',   color: '#0891b2' },
+                      ].map(({ checked, onChange, label, color }) => (
+                        <label key={label} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '5px', cursor: 'pointer', fontSize: '0.85rem', color: '#1e293b', backgroundColor: checked ? `${color}22` : 'transparent', transition: 'background 0.15s' }}>
+                          <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: color }} />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div style={{ fontSize: '0.78rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '6px 0 2px', padding: '0 4px' }}>風險監測</div>
               {/* 淹水熱區（含子選項） */}
               <div style={{ borderRadius: '6px', marginBottom: '1px' }}>
