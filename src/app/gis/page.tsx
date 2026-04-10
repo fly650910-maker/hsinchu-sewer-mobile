@@ -2538,11 +2538,10 @@ export default function GisQueryPage() {
                       </CircleMarker>
                     ))}
                     {showBiaoConnector && biaoData.connector?.features.map((f: any, i: number) => (
-                      <CircleMarker
+                      <Polyline
                         key={`b8-cn-${i}`}
-                        center={[f.lat, f.lng]}
-                        radius={4}
-                        pathOptions={{ color: '#0369a1', fillColor: '#38bdf8', fillOpacity: 0.85, weight: 1 }}
+                        positions={f.positions}
+                        pathOptions={{ color: '#0891b2', weight: 2, opacity: 0.85 }}
                       >
                         <Popup maxWidth={280}>
                           <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
@@ -2553,7 +2552,7 @@ export default function GisQueryPage() {
                             ))}
                           </div>
                         </Popup>
-                      </CircleMarker>
+                      </Polyline>
                     ))}
                   </>
                 )}
