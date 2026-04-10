@@ -2058,13 +2058,16 @@ export default function GisQueryPage() {
                     ⚠️ {mapError}
                   </div>
                 )}
-                {!mapLoading && !mapError && (showManholes || showPipelines || showCatchBasins || showSewageManholes || showYinJing || showSewagePipelines || showAlleyPipelines) && (
+                {!mapLoading && !mapError && (showManholes || showPipelines || showCatchBasins || showSewageManholes || showYinJing || showSewagePipelines || showAlleyPipelines || showBiaoManhole || showBiaoYinjing || showBiaoConnector) && (
                   <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.92)', border: '1px solid #e2e8f0', fontSize: '0.72rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                     {systemType === '污水' ? (<>
                       {showSewageManholes && <span style={{ color: '#8b5cf6', fontWeight: 700 }}>🟣 {mapManholes.filter(m => m.source === '竣工人孔' && (!mapAreaFilter || m.area === mapAreaFilter)).length} 竣工人孔</span>}
                       {showYinJing && <span style={{ color: '#10b981', fontWeight: 700 }}>🟢 {mapManholes.filter(m => m.source === '陰井' && (!mapAreaFilter || m.area === mapAreaFilter)).length} 陰井</span>}
                       {showSewagePipelines && <span style={{ color: '#3b82f6', fontWeight: 700 }}>🔵 {mapPipelines.filter(p => p.source === '竣工管線' && (!mapAreaFilter || p.area === mapAreaFilter)).length} 竣工管線</span>}
                       {showAlleyPipelines && <span style={{ color: '#06b6d4', fontWeight: 700 }}>🔷 {mapPipelines.filter(p => p.source === '巷道連接管' && (!mapAreaFilter || p.area === mapAreaFilter)).length} 巷道連接管</span>}
+                      {showBiaoManhole && biaoData && <span style={{ color: '#ea580c', fontWeight: 700 }}>🟠 {biaoData.manhole?.features.length ?? 0} 八標人孔</span>}
+                      {showBiaoYinjing && biaoData && <span style={{ color: '#ca8a04', fontWeight: 700 }}>🟡 {biaoData.yinjing?.features.length ?? 0} 八標陰井</span>}
+                      {showBiaoConnector && biaoData && <span style={{ color: '#0891b2', fontWeight: 700 }}>🔵 {biaoData.connector?.features.length ?? 0} 八標連接管</span>}
                     </>) : (<>
                       {showManholes && <span style={{ color: '#8b5cf6', fontWeight: 700 }}>🟣 {mapManholes.filter(m => m.manhole_type !== '集水井' && (!mapAreaFilter || m.area === mapAreaFilter)).length} 人孔</span>}
                       {showCatchBasins && <span style={{ color: '#d97706', fontWeight: 700 }}>🟡 {mapManholes.filter(m => m.manhole_type === '集水井' && (!mapAreaFilter || m.area === mapAreaFilter)).length} 集水井</span>}
@@ -2501,59 +2504,63 @@ export default function GisQueryPage() {
                 {/* 八標竣工設施圖層 */}
                 {biaoData && (
                   <>
-                    {showBiaoManhole && biaoData.manhole?.features.map((f: any, i: number) => (
-                      <CircleMarker
-                        key={`b8-mh-${i}`}
-                        center={[f.lat, f.lng]}
-                        radius={6}
-                        pathOptions={{ color: '#c2410c', fillColor: '#fb923c', fillOpacity: 0.9, weight: 1.5 }}
-                      >
-                        <Popup maxWidth={280}>
-                          <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#c2410c', fontSize: '1rem' }}>🟠 八標竣工人孔</strong><br />
-                            <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
-                              <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
-                            ))}
-                          </div>
-                        </Popup>
-                      </CircleMarker>
-                    ))}
-                    {showBiaoYinjing && biaoData.yinjing?.features.map((f: any, i: number) => (
-                      <CircleMarker
-                        key={`b8-yj-${i}`}
-                        center={[f.lat, f.lng]}
-                        radius={5}
-                        pathOptions={{ color: '#a16207', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 1.5 }}
-                      >
-                        <Popup maxWidth={280}>
-                          <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#a16207', fontSize: '1rem' }}>🟡 八標陰井</strong><br />
-                            <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
-                              <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
-                            ))}
-                          </div>
-                        </Popup>
-                      </CircleMarker>
-                    ))}
-                    {showBiaoConnector && biaoData.connector?.features.map((f: any, i: number) => (
-                      <Polyline
-                        key={`b8-cn-${i}`}
-                        positions={f.positions}
-                        pathOptions={{ color: '#0891b2', weight: 2, opacity: 0.85 }}
-                      >
-                        <Popup maxWidth={280}>
-                          <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#0369a1', fontSize: '1rem' }}>🔵 八標連接管</strong><br />
-                            <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
-                              <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
-                            ))}
-                          </div>
-                        </Popup>
-                      </Polyline>
-                    ))}
+                    {showBiaoManhole && biaoData.manhole?.features.map((f: any, i: number) => {
+                      const a = f.attrs || {};
+                      return (
+                        <CircleMarker key={`b8-mh-${i}`} center={[f.lat, f.lng]} radius={6}
+                          pathOptions={{ color: '#c2410c', fillColor: '#fb923c', fillOpacity: 0.9, weight: 1.5 }}>
+                          <Popup maxWidth={280}>
+                            <div style={{ minWidth: '240px', lineHeight: '1.75', fontSize: '0.88rem' }}>
+                              <div style={{ fontWeight: 700, color: '#c2410c', fontSize: '1rem', marginBottom: '4px' }}>🟠 八標竣工人孔</div>
+                              <div style={{ fontWeight: 700, marginBottom: '4px' }}>{f.name}</div>
+                              {a.MH_TLE   && <div><span style={{color:'#6b7280'}}>頂高程：</span>{a.MH_TLE} m</div>}
+                              {a.MH_DEP   && <div><span style={{color:'#6b7280'}}>深度：</span>{a.MH_DEP} m</div>}
+                              {a.MH_TYP !== undefined && <div><span style={{color:'#6b7280'}}>型式：</span>{a.MH_TYP}</div>}
+                              {a.CONS_TIT && <div style={{fontSize:'0.78rem',color:'#9ca3af',marginTop:'4px'}}>{a.CONS_TIT}</div>}
+                            </div>
+                          </Popup>
+                        </CircleMarker>
+                      );
+                    })}
+                    {showBiaoYinjing && biaoData.yinjing?.features.map((f: any, i: number) => {
+                      const a = f.attrs || {};
+                      return (
+                        <CircleMarker key={`b8-yj-${i}`} center={[f.lat, f.lng]} radius={5}
+                          pathOptions={{ color: '#a16207', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 1.5 }}>
+                          <Popup maxWidth={280}>
+                            <div style={{ minWidth: '240px', lineHeight: '1.75', fontSize: '0.88rem' }}>
+                              <div style={{ fontWeight: 700, color: '#a16207', fontSize: '1rem', marginBottom: '4px' }}>🟡 八標陰井</div>
+                              <div style={{ fontWeight: 700, marginBottom: '4px' }}>{f.name}</div>
+                              {a.DS_CB_NUM && <div><span style={{color:'#6b7280'}}>下游編號：</span>{a.DS_CB_NUM}</div>}
+                              {a.CB_TYP !== undefined && <div><span style={{color:'#6b7280'}}>型式：</span>{a.CB_TYP}</div>}
+                              {a.G_LE      && <div><span style={{color:'#6b7280'}}>地面高程：</span>{a.G_LE} m</div>}
+                              {a.CB_DEP    && <div><span style={{color:'#6b7280'}}>深度：</span>{a.CB_DEP} m</div>}
+                              {a.CONS_TIT  && <div style={{fontSize:'0.78rem',color:'#9ca3af',marginTop:'4px'}}>{a.CONS_TIT}</div>}
+                            </div>
+                          </Popup>
+                        </CircleMarker>
+                      );
+                    })}
+                    {showBiaoConnector && biaoData.connector?.features.map((f: any, i: number) => {
+                      const a = f.attrs || {};
+                      return (
+                        <Polyline key={`b8-cn-${i}`} positions={f.positions}
+                          pathOptions={{ color: '#0891b2', weight: 2.5, opacity: 0.9 }}>
+                          <Popup maxWidth={280}>
+                            <div style={{ minWidth: '240px', lineHeight: '1.75', fontSize: '0.88rem' }}>
+                              <div style={{ fontWeight: 700, color: '#0369a1', fontSize: '1rem', marginBottom: '4px' }}>🔵 八標連接管</div>
+                              <div style={{ fontWeight: 700, marginBottom: '4px' }}>{f.name}</div>
+                              {a.US_CB    && <div><span style={{color:'#6b7280'}}>上游陰井：</span>{a.US_CB}</div>}
+                              {a.DS_CB    && <div><span style={{color:'#6b7280'}}>下游陰井：</span>{a.DS_CB}</div>}
+                              {a.DIA      && <div><span style={{color:'#6b7280'}}>管徑：</span>{a.DIA} mm</div>}
+                              {a.PI_LENG  && <div><span style={{color:'#6b7280'}}>管線長度：</span>{a.PI_LENG} m</div>}
+                              {a.PI_MAT   && <div><span style={{color:'#6b7280'}}>材質：</span>{a.PI_MAT}</div>}
+                              {a.CONS_TIT && <div style={{fontSize:'0.78rem',color:'#9ca3af',marginTop:'4px'}}>{a.CONS_TIT}</div>}
+                            </div>
+                          </Popup>
+                        </Polyline>
+                      );
+                    })}
                   </>
                 )}
                 {biaoLoading && (showBiaoManhole || showBiaoYinjing || showBiaoConnector) && (
