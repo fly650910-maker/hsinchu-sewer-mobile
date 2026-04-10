@@ -610,12 +610,12 @@ export default function GisQueryPage() {
   const [inspectionProgress, setInspectionProgress] = useState<{ total: number; completed: number; progress_pct: number } | null>(null);
   const [inspectionUpdating, setInspectionUpdating] = useState<string | null>(null);
 
-  // 七標竣工設施（陰井 / P1200人孔 / 直管式連接井）
-  const [showQibiaoYinjing,    setShowQibiaoYinjing]    = useState(false);
-  const [showQibiaoManhole,    setShowQibiaoManhole]    = useState(false);
-  const [showQibiaoConnector,  setShowQibiaoConnector]  = useState(false);
-  const [qibiaoData, setQibiaoData] = useState<Record<string, { label: string; color: string; features: any[] }> | null>(null);
-  const [qibiaoLoading, setQibiaoLoading] = useState(false);
+  // 八標竣工設施（竣工人孔 / 陰井 / 用戶接管）
+  const [showBiaoManhole,    setShowBiaoManhole]    = useState(false);
+  const [showBiaoYinjing,    setShowBiaoYinjing]    = useState(false);
+  const [showBiaoHousehold,  setShowBiaoHousehold]  = useState(false);
+  const [biaoData, setBiaoData] = useState<Record<string, { label: string; color: string; features: any[] }> | null>(null);
+  const [biaoLoading, setBiaoLoading] = useState(false);
 
   // 塞管通報（開口契約歷史紀錄）
   const [pipeReports, setPipeReports] = useState<PipeReport[]>([]);
@@ -1184,18 +1184,18 @@ export default function GisQueryPage() {
     } catch (e) { console.error('fetchInspectionRoutes115 error:', e); }
   }, []);
 
-  const fetchQibiaoFacilities = useCallback(async () => {
-    if (qibiaoData) return; // already loaded
-    setQibiaoLoading(true);
+  const fetchBiaoFacilities = useCallback(async () => {
+    if (biaoData) return; // already loaded
+    setBiaoLoading(true);
     try {
-      const res = await fetch('/api/gis/qibiao-facilities');
+      const res = await fetch('/api/gis/biao-facilities');
       if (res.ok) {
         const d = await res.json();
-        setQibiaoData(d);
+        setBiaoData(d);
       }
-    } catch (e) { console.error('fetchQibiaoFacilities error:', e); }
-    finally { setQibiaoLoading(false); }
-  }, [qibiaoData]);
+    } catch (e) { console.error('fetchBiaoFacilities error:', e); }
+    finally { setBiaoLoading(false); }
+  }, [biaoData]);
 
   const toggleInspectionStatus = useCallback(async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
@@ -1754,9 +1754,9 @@ export default function GisQueryPage() {
                 { checked: showSewagePipelines, onChange: (v: boolean) => { setShowSewagePipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 污水竣工管線', color: '#3b82f6' },
                 { checked: showAlleyPipelines, onChange: (v: boolean) => { setShowAlleyPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔷 巷道連接管', color: '#06b6d4' },
                 { checked: showHouseholds, onChange: (v: boolean) => { setShowHouseholds(v); if (v && mapHouseholds.length === 0) fetchHouseholds(); }, label: '🏠 用戶接管資料', color: '#eab308' },
-                { checked: showQibiaoYinjing, onChange: (v: boolean) => { setShowQibiaoYinjing(v); if (v) fetchQibiaoFacilities(); }, label: '🟡 七標-陰井', color: '#f59e0b' },
-                { checked: showQibiaoManhole, onChange: (v: boolean) => { setShowQibiaoManhole(v); if (v) fetchQibiaoFacilities(); }, label: '🟣 七標-P1200人孔', color: '#6366f1' },
-                { checked: showQibiaoConnector, onChange: (v: boolean) => { setShowQibiaoConnector(v); if (v) fetchQibiaoFacilities(); }, label: '🟢 七標-直管式連接井', color: '#10b981' },
+                { checked: showBiaoManhole, onChange: (v: boolean) => { setShowBiaoManhole(v); if (v) fetchBiaoFacilities(); }, label: '🟠 八標-竣工人孔', color: '#ea580c' },
+                { checked: showBiaoYinjing, onChange: (v: boolean) => { setShowBiaoYinjing(v); if (v) fetchBiaoFacilities(); }, label: '🟡 八標-陰井', color: '#ca8a04' },
+                { checked: showBiaoHousehold, onChange: (v: boolean) => { setShowBiaoHousehold(v); if (v) fetchBiaoFacilities(); }, label: '🟤 八標-用戶接管', color: '#92400e' },
               ] : [
                 { checked: showManholes, onChange: (v: boolean) => { setShowManholes(v); if (!v && selectedAsset?.type === 'manhole') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🟣 人孔 / 陰井', color: '#8b5cf6' },
                 { checked: showPipelines, onChange: (v: boolean) => { setShowPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 管線網絡', color: '#3b82f6' },
@@ -2498,57 +2498,57 @@ export default function GisQueryPage() {
                   </CircleMarker>
                 ))}
 
-                {/* 七標竣工設施圖層 */}
-                {qibiaoData && (
+                {/* 八標竣工設施圖層 */}
+                {biaoData && (
                   <>
-                    {showQibiaoYinjing && qibiaoData.yinjing?.features.map((f: any, i: number) => (
+                    {showBiaoManhole && biaoData.manhole?.features.map((f: any, i: number) => (
                       <CircleMarker
-                        key={`qb-yj-${i}`}
-                        center={[f.lat, f.lng]}
-                        radius={5}
-                        pathOptions={{ color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 1.5 }}
-                      >
-                        <Popup maxWidth={280}>
-                          <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#d97706', fontSize: '1rem' }}>🟡 七標陰井</strong><br />
-                            <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]) => (
-                              <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
-                            ))}
-                          </div>
-                        </Popup>
-                      </CircleMarker>
-                    ))}
-                    {showQibiaoManhole && qibiaoData.manhole?.features.map((f: any, i: number) => (
-                      <CircleMarker
-                        key={`qb-mh-${i}`}
+                        key={`b8-mh-${i}`}
                         center={[f.lat, f.lng]}
                         radius={6}
-                        pathOptions={{ color: '#4f46e5', fillColor: '#818cf8', fillOpacity: 0.9, weight: 1.5 }}
+                        pathOptions={{ color: '#c2410c', fillColor: '#fb923c', fillOpacity: 0.9, weight: 1.5 }}
                       >
                         <Popup maxWidth={280}>
                           <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#4f46e5', fontSize: '1rem' }}>🟣 七標P1200人孔</strong><br />
+                            <strong style={{ color: '#c2410c', fontSize: '1rem' }}>🟠 八標竣工人孔</strong><br />
                             <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]) => (
+                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
                               <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
                             ))}
                           </div>
                         </Popup>
                       </CircleMarker>
                     ))}
-                    {showQibiaoConnector && qibiaoData.connector?.features.map((f: any, i: number) => (
+                    {showBiaoYinjing && biaoData.yinjing?.features.map((f: any, i: number) => (
                       <CircleMarker
-                        key={`qb-cn-${i}`}
+                        key={`b8-yj-${i}`}
                         center={[f.lat, f.lng]}
-                        radius={4}
-                        pathOptions={{ color: '#059669', fillColor: '#34d399', fillOpacity: 0.9, weight: 1.5 }}
+                        radius={5}
+                        pathOptions={{ color: '#a16207', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 1.5 }}
                       >
                         <Popup maxWidth={280}>
                           <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#059669', fontSize: '1rem' }}>🟢 七標直管式連接井</strong><br />
+                            <strong style={{ color: '#a16207', fontSize: '1rem' }}>🟡 八標陰井</strong><br />
                             <strong>{f.name}</strong><br />
-                            {Object.entries(f.attrs || {}).map(([k, v]) => (
+                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
+                              <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
+                            ))}
+                          </div>
+                        </Popup>
+                      </CircleMarker>
+                    ))}
+                    {showBiaoHousehold && biaoData.household?.features.map((f: any, i: number) => (
+                      <CircleMarker
+                        key={`b8-hh-${i}`}
+                        center={[f.lat, f.lng]}
+                        radius={4}
+                        pathOptions={{ color: '#78350f', fillColor: '#d97706', fillOpacity: 0.85, weight: 1 }}
+                      >
+                        <Popup maxWidth={280}>
+                          <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
+                            <strong style={{ color: '#78350f', fontSize: '1rem' }}>🟤 八標用戶接管</strong><br />
+                            <strong>{f.name}</strong><br />
+                            {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
                               <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
                             ))}
                           </div>
@@ -2557,9 +2557,9 @@ export default function GisQueryPage() {
                     ))}
                   </>
                 )}
-                {qibiaoLoading && (showQibiaoYinjing || showQibiaoManhole || showQibiaoConnector) && (
+                {biaoLoading && (showBiaoManhole || showBiaoYinjing || showBiaoHousehold) && (
                   <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(255,255,255,0.9)', padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', zIndex: 999 }}>
-                    載入七標設施中…
+                    載入八標設施中…
                   </div>
                 )}
 
