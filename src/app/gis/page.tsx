@@ -610,10 +610,10 @@ export default function GisQueryPage() {
   const [inspectionProgress, setInspectionProgress] = useState<{ total: number; completed: number; progress_pct: number } | null>(null);
   const [inspectionUpdating, setInspectionUpdating] = useState<string | null>(null);
 
-  // 八標竣工設施（竣工人孔 / 陰井 / 用戶接管）
+  // 八標竣工設施（竣工人孔 / 陰井 / 連接管）
   const [showBiaoManhole,    setShowBiaoManhole]    = useState(false);
   const [showBiaoYinjing,    setShowBiaoYinjing]    = useState(false);
-  const [showBiaoHousehold,  setShowBiaoHousehold]  = useState(false);
+  const [showBiaoConnector,  setShowBiaoConnector]  = useState(false);
   const [biaoData, setBiaoData] = useState<Record<string, { label: string; color: string; features: any[] }> | null>(null);
   const [biaoLoading, setBiaoLoading] = useState(false);
 
@@ -1754,9 +1754,9 @@ export default function GisQueryPage() {
                 { checked: showSewagePipelines, onChange: (v: boolean) => { setShowSewagePipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 污水竣工管線', color: '#3b82f6' },
                 { checked: showAlleyPipelines, onChange: (v: boolean) => { setShowAlleyPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔷 巷道連接管', color: '#06b6d4' },
                 { checked: showHouseholds, onChange: (v: boolean) => { setShowHouseholds(v); if (v && mapHouseholds.length === 0) fetchHouseholds(); }, label: '🏠 用戶接管資料', color: '#eab308' },
-                { checked: showBiaoManhole, onChange: (v: boolean) => { setShowBiaoManhole(v); if (v) fetchBiaoFacilities(); }, label: '🟠 八標-竣工人孔', color: '#ea580c' },
-                { checked: showBiaoYinjing, onChange: (v: boolean) => { setShowBiaoYinjing(v); if (v) fetchBiaoFacilities(); }, label: '🟡 八標-陰井', color: '#ca8a04' },
-                { checked: showBiaoHousehold, onChange: (v: boolean) => { setShowBiaoHousehold(v); if (v) fetchBiaoFacilities(); }, label: '🟤 八標-用戶接管', color: '#92400e' },
+                { checked: showBiaoManhole,   onChange: (v: boolean) => { setShowBiaoManhole(v);   if (v) fetchBiaoFacilities(); }, label: '🟠 八標-竣工人孔', color: '#ea580c' },
+                { checked: showBiaoYinjing,   onChange: (v: boolean) => { setShowBiaoYinjing(v);   if (v) fetchBiaoFacilities(); }, label: '🟡 八標-陰井',     color: '#ca8a04' },
+                { checked: showBiaoConnector, onChange: (v: boolean) => { setShowBiaoConnector(v); if (v) fetchBiaoFacilities(); }, label: '🔵 八標-連接管',   color: '#0891b2' },
               ] : [
                 { checked: showManholes, onChange: (v: boolean) => { setShowManholes(v); if (!v && selectedAsset?.type === 'manhole') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🟣 人孔 / 陰井', color: '#8b5cf6' },
                 { checked: showPipelines, onChange: (v: boolean) => { setShowPipelines(v); if (!v && selectedAsset?.type === 'pipeline') { setSelectedAsset(null); setShowStreetView(false); } }, label: '🔵 管線網絡', color: '#3b82f6' },
@@ -2537,16 +2537,16 @@ export default function GisQueryPage() {
                         </Popup>
                       </CircleMarker>
                     ))}
-                    {showBiaoHousehold && biaoData.household?.features.map((f: any, i: number) => (
+                    {showBiaoConnector && biaoData.connector?.features.map((f: any, i: number) => (
                       <CircleMarker
-                        key={`b8-hh-${i}`}
+                        key={`b8-cn-${i}`}
                         center={[f.lat, f.lng]}
                         radius={4}
-                        pathOptions={{ color: '#78350f', fillColor: '#d97706', fillOpacity: 0.85, weight: 1 }}
+                        pathOptions={{ color: '#0369a1', fillColor: '#38bdf8', fillOpacity: 0.85, weight: 1 }}
                       >
                         <Popup maxWidth={280}>
                           <div style={{ minWidth: '230px', lineHeight: '1.7', fontSize: '0.88rem' }}>
-                            <strong style={{ color: '#78350f', fontSize: '1rem' }}>🟤 八標用戶接管</strong><br />
+                            <strong style={{ color: '#0369a1', fontSize: '1rem' }}>🔵 八標連接管</strong><br />
                             <strong>{f.name}</strong><br />
                             {Object.entries(f.attrs || {}).map(([k, v]: [string, any]) => (
                               <div key={k}><span style={{ color: '#6b7280' }}>{k}：</span>{String(v)}</div>
@@ -2557,7 +2557,7 @@ export default function GisQueryPage() {
                     ))}
                   </>
                 )}
-                {biaoLoading && (showBiaoManhole || showBiaoYinjing || showBiaoHousehold) && (
+                {biaoLoading && (showBiaoManhole || showBiaoYinjing || showBiaoConnector) && (
                   <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(255,255,255,0.9)', padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem', zIndex: 999 }}>
                     載入八標設施中…
                   </div>
