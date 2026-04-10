@@ -2542,6 +2542,11 @@ export default function GisQueryPage() {
                               {a.MH_DEP   && <div><span style={{color:'#6b7280'}}>深度：</span>{a.MH_DEP} m</div>}
                               {a.MH_TYP !== undefined && <div><span style={{color:'#6b7280'}}>型式：</span>{a.MH_TYP}</div>}
                               {a.CONS_TIT && <div style={{fontSize:'0.78rem',color:'#9ca3af',marginTop:'4px'}}>{a.CONS_TIT}</div>}
+                              <div style={{ marginTop: '8px' }}>
+                                <button onClick={() => openStreetView(f.lat, f.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                                  📷 Google 街景
+                                </button>
+                              </div>
                             </div>
                           </Popup>
                         </CircleMarker>
@@ -2561,6 +2566,11 @@ export default function GisQueryPage() {
                               {a.G_LE      && <div><span style={{color:'#6b7280'}}>地面高程：</span>{a.G_LE} m</div>}
                               {a.CB_DEP    && <div><span style={{color:'#6b7280'}}>深度：</span>{a.CB_DEP} m</div>}
                               {a.CONS_TIT  && <div style={{fontSize:'0.78rem',color:'#9ca3af',marginTop:'4px'}}>{a.CONS_TIT}</div>}
+                              <div style={{ marginTop: '8px' }}>
+                                <button onClick={() => openStreetView(f.lat, f.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                                  📷 Google 街景
+                                </button>
+                              </div>
                             </div>
                           </Popup>
                         </CircleMarker>
