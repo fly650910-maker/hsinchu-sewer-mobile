@@ -24,10 +24,11 @@ export async function POST(request: Request) {
     }
 
     const db = await getDb();
-    
-    // Simulate Geocoding: assign a random location in Zhubei Area
-    const lat = 24.81 + Math.random() * 0.04;
-    const lng = 121.00 + Math.random() * 0.05;
+
+    // 座標設為 NULL，待後續透過真實地理編碼服務取得正確位置
+    // TODO: 可串接政府開放資料地址解析 API（如 NLSC 內政部地理編碼）取得實際座標
+    const lat = null;
+    const lng = null;
 
     const result = await db.run(
       'INSERT INTO complaints (reporter_name, phone, address, description, status, lat, lng) VALUES (?, ?, ?, ?, ?, ?, ?)',

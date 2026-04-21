@@ -9,7 +9,12 @@ export async function DELETE(
     const resolvedParams = await params;
     const { id } = resolvedParams;
     const db = await getDb();
-    
+
+    const existing = await db.get('SELECT id FROM complaints WHERE id = ?', id);
+    if (!existing) {
+      return NextResponse.json({ error: 'Complaint not found' }, { status: 404 });
+    }
+
     await db.run('DELETE FROM complaints WHERE id = ?', id);
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -25,9 +30,20 @@ export async function PATCH(
   try {
     const resolvedParams = await params;
     const { id } = resolvedParams;
-    const { status, resolution_notes } = await request.json();
+    const body = await request.json();
+    const { status, resolution_notes } = body;
+
+    if (!status) {
+      return NextResponse.json({ error: 'Missing required field: status' }, { status: 400 });
+    }
+
     const db = await getDb();
-    
+
+    const existing = await db.get('SELECT id FROM complaints WHERE id = ?', id);
+    if (!existing) {
+      return NextResponse.json({ error: 'Complaint not found' }, { status: 404 });
+    }
+
     const resolved_at = status === 'resolved' ? new Date().toISOString() : null;
 
     await db.run(

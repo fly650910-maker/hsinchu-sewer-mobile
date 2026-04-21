@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
     // Fetch geocoded household connections in current viewport
     const rows = await db.all(
-      `SELECT id, water_no, source, usage_addr, lat, lng
+      `SELECT id, water_no, source, usage_addr, sheet, lat, lng
        FROM household_connections
        WHERE lat IS NOT NULL AND lng IS NOT NULL
          AND lat BETWEEN ? AND ?

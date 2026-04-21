@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const BASE_DIR = '/Users/fly/Downloads/下水道科';
+// 自動偵測：sewerage-system 的上一層就是下水道科根目錄
+// 在任何機器上都不需要手動設定 SEWERAGE_BASE_DIR
+const BASE_DIR = process.env.SEWERAGE_BASE_DIR || path.resolve(process.cwd(), '..');
 
 export async function GET(request: Request) {
   try {
@@ -25,7 +27,7 @@ export async function GET(request: Request) {
     }
 
     const entries = fs.readdirSync(targetPath, { withFileTypes: true });
-    const items = entries.map(entry => {
+    const items = entries.map((entry: any) => {
       const isDir = entry.isDirectory();
       return {
         name: entry.name,

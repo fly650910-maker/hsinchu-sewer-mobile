@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     );
 
     // Filter by true distance (circle) and convert their coordinates back to WGS84 for the map
-    const results = rows.map(row => {
+    const results = rows.map((row: any) => {
       const dbX = row.x;
       const dbY = row.y;
       const distance = Math.sqrt(Math.pow(dbX - twd97X, 2) + Math.pow(dbY - twd97Y, 2));
@@ -52,8 +52,8 @@ export async function GET(request: Request) {
         lat: wgs84Lat,
         lng: wgs84Lng
       };
-    }).filter(row => row.distance <= radius)
-      .sort((a, b) => a.distance - b.distance);
+    }).filter((row: any) => row.distance <= radius)
+      .sort((a: any, b: any) => a.distance - b.distance);
 
     // Find nearby pipelines by joining upstream/downstream manholes
     // This is an approximation: if any attached manhole is within radius, include the pipeline
@@ -77,7 +77,7 @@ export async function GET(request: Request) {
       [minX, maxX, minY, maxY, minX, maxX, minY, maxY]
     );
 
-    const pipelines = pipelineRows.map(row => {
+    const pipelines = pipelineRows.map((row: any) => {
       const coords = [];
       if (row.u_x && row.u_y) {
         const [lng, lat] = proj4('EPSG:3826', 'EPSG:4326', [row.u_x, row.u_y]);
@@ -88,9 +88,9 @@ export async function GET(request: Request) {
         coords.push([lat, lng]);
       }
       return { ...row, coords };
-    }).filter(row => row.coords.length === 2);
+    }).filter((row: any) => row.coords.length === 2);
 
-    const uniquePipelines = Array.from(new Map(pipelines.map(p => [p.id, p])).values());
+    const uniquePipelines = Array.from(new Map(pipelines.map((p: any) => [p.id, p])).values());
 
     return NextResponse.json({
       target: { lat, lng, twd97X, twd97Y },

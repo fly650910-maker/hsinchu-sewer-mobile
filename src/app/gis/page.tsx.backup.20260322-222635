@@ -1,0 +1,2857 @@
+'use client';
+
+export const dynamic = 'force-dynamic';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import Link from 'next/link';
+import { ArrowLeft, Database, Search, ChevronLeft, ChevronRight, Map, Layers, MessageSquareWarning, Plus, Trash2, CheckCircle, CheckCircle2, CircleDot, Clock, MapPin, X, Download, ShieldAlert, Briefcase, Wrench, Home, Waves, GitBranch } from 'lucide-react';
+import { mapToEmicStatus } from '@/lib/cwa';
+
+interface Pipeline {
+  id: number; sewer_no: string; upstream_node: string; downstream_node: string;
+  pipe_type: string; material: string; diameter: string; length: number;
+  slope: number; upstream_elevation: number; downstream_elevation: number;
+  project_id: string; project_name: string; contractor: string; area: string; source_file: string;
+}
+
+interface Manhole {
+  id: number; manhole_no: string; x: number; y: number;
+  manhole_type: string; location: string; ground_level: number; depth: number;
+  project_id: string; project_name: string; contractor: string; area: string; source_file: string;
+}
+
+interface ProjectScope {
+  id: number; name: string; type: string; status: string; progress_percent: number;
+  bbox_min_x: number | null; bbox_min_y: number | null; bbox_max_x: number | null; bbox_max_y: number | null;
+}
+
+interface Complaint {
+  id: number;
+  reporter_name: string;
+  phone: string;
+  address: string;
+  description: string;
+  status: string;
+  resolution_notes: string;
+  reported_at: string;
+  resolved_at: string | null;
+  lat?: number;
+  lng?: number;
+}
+
+interface MapManhole {
+  id: number; manhole_no: string; lat: number; lng: number;
+  manhole_type: string; location: string; depth: number; project_name: string; system_type: string;
+}
+
+interface MapPipeline {
+  id: number; sewer_no: string; upstream_node: string; downstream_node: string;
+  pipe_type: string; material: string;
+  diameter: string; length: number; project_name: string; system_type: string;
+  coords: [[number, number], [number, number]];
+}
+
+interface PipelineCondition {
+  p_no: string; town: string; max_grade: number;
+  has_damage: boolean; has_sedimentation: boolean; has_crossing: boolean;
+  has_cable: boolean; has_other: boolean; cannot_survey: boolean;
+  issue_count: number;
+  issues: Array<{ type: string; grade: number | null; desc: string | null }>;
+}
+
+interface ConditionLine extends PipelineCondition {
+  id: number;
+  coords: [[number, number], [number, number]];
+}
+
+interface FloodHotspot {
+  id: number; location: string; town: string;
+  lat: number; lng: number; description: string;
+  years: string; event_count: number; source: string;
+}
+
+interface WaterMonitor {
+  id: number; seq: number; district: string;
+  manhole_no: string; station_id: string;
+  lat: number; lng: number; location: string; diameter: number | null;
+}
+
+interface InspectionSite {
+  id: number; seq: number; district: string; name: string;
+  site_type: string; lat: number; lng: number;
+  address: string; depth: number | null; year: string;
+}
+
+interface WaterBankNode {
+  id: number; name: string; town: string; segment: string; village: string;
+  lat: number; lng: number;
+  existing_buildings: number; existing_households: number; existing_storage_m3: number;
+  recommended_add_m3: number; total_capacity_m3: number;
+  priority: number; node_type: string; land_status: string;
+  nearby_flood_hotspot: string; note: string;
+}
+
+interface PipeReport {
+  id: number;
+  report_date: string;
+  address: string;
+  issue_type: string;
+  resolution: string;
+  year: string;
+  sheet: string;
+  lat: number;
+  lng: number;
+}
+
+import loadDynamic from 'next/dynamic';
+import 'leaflet/dist/leaflet.css';
+
+const MapContainer = loadDynamic(() => import('react-leaflet').then(m => m.MapContainer), { ssr: false });
+const TileLayer = loadDynamic(() => import('react-leaflet').then(m => m.TileLayer), { ssr: false });
+const Rectangle = loadDynamic(() => import('react-leaflet').then(m => m.Rectangle), { ssr: false });
+const CircleMarker = loadDynamic(() => import('react-leaflet').then(m => m.CircleMarker), { ssr: false });
+const Polyline = loadDynamic(() => import('react-leaflet').then(m => m.Polyline), { ssr: false });
+const Polygon = loadDynamic(() => import('react-leaflet').then(m => m.Polygon), { ssr: false });
+const Popup = loadDynamic(() => import('react-leaflet').then(m => m.Popup), { ssr: false });
+const Tooltip = loadDynamic(() => import('react-leaflet').then(m => m.Tooltip), { ssr: false });
+
+// Inner component for map event handling — must be a child of MapContainer
+// useMapEvents is a hook so it must be called inside a functional component that is a Leaflet child
+const MapBoundsHandlerInner = loadDynamic(
+  () => import('react-leaflet').then(module => {
+    const { useMapEvents } = module;
+    function BoundsHandler({ onBoundsChange }: { onBoundsChange: (b: any) => void }) {
+      useMapEvents({
+        moveend: (e: any) => {
+          const b = e.target.getBounds();
+          onBoundsChange({ min_lat: b.getSouth(), max_lat: b.getNorth(), min_lng: b.getWest(), max_lng: b.getEast() });
+        },
+        zoomend: (e: any) => {
+          const b = e.target.getBounds();
+          onBoundsChange({ min_lat: b.getSouth(), max_lat: b.getNorth(), min_lng: b.getWest(), max_lng: b.getEast() });
+        },
+      });
+      return null;
+    }
+    return { default: BoundsHandler };
+  }),
+  { ssr: false }
+);
+
+function MapBoundsHandler({ onBoundsChange }: { onBoundsChange: (bounds: any) => void }) {
+  return <MapBoundsHandlerInner onBoundsChange={onBoundsChange} />;
+}
+
+// Inner component for map flyTo (must be a child of MapContainer)
+const MapFlyToInner = loadDynamic(
+  () => import('react-leaflet').then(module => {
+    const { useMap } = module;
+    function FlyTo({ center }: { center: [number, number] }) {
+      const map = useMap();
+      useEffect(() => {
+        map.flyTo(center, 16);
+      }, [center, map]);
+      return null;
+    }
+    return { default: FlyTo };
+  }),
+  { ssr: false }
+);
+
+function MapFlyTo({ center }: { center: [number, number] }) {
+  return <MapFlyToInner center={center} />;
+}
+
+const MapClickHandlerInner = loadDynamic(
+  () => import('react-leaflet').then(module => {
+    const { useMapEvents } = module;
+    function ClickHandler({ onClick }: { onClick: (latlng: any) => void }) {
+      useMapEvents({
+        click: (e) => onClick(e.latlng),
+      });
+      return null;
+    }
+    return { default: ClickHandler };
+  }),
+  { ssr: false }
+);
+
+function MapClickHandler({ onClick }: { onClick: (latlng: any) => void }) {
+  return <MapClickHandlerInner onClick={onClick} />;
+}
+
+export default function GisQueryPage() {
+  const [type, setType] = useState<'pipelines' | 'manholes'>('pipelines');
+  const [systemType, setSystemType] = useState<'污水' | '雨水'>('污水');
+  const [data, setData] = useState<(Pipeline | Manhole)[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [areaFilter, setAreaFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const [viewMode, setViewMode] = useState<'table' | 'map'>('map');
+  const [projectScopes, setProjectScopes] = useState<ProjectScope[]>([]);
+  
+  // Complaints State
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+  const [showComplaintsSidebar, setShowComplaintsSidebar] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formData, setFormData] = useState({ 
+    reporter_name: '', phone: '', address: '', description: '', status: 'pending' 
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editData, setEditData] = useState({ status: '', resolution_notes: '' });
+  const [filterStatus, setFilterStatus] = useState('全部');
+  const [compSearchTerm, setCompSearchTerm] = useState('');
+
+  // New: GIS data for manholes/pipelines on map
+  const [mapManholes, setMapManholes] = useState<MapManhole[]>([]);
+  const [mapPipelines, setMapPipelines] = useState<MapPipeline[]>([]);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [showManholes, setShowManholes] = useState(true);
+  const [showPipelines, setShowPipelines] = useState(false);
+  const [showCatchBasins, setShowCatchBasins] = useState(false);
+  const [showProjectScopes, setShowProjectScopes] = useState(false);
+  const [showComplaints, setShowComplaints] = useState(false);
+  const [showHistoryReports, setShowHistoryReports] = useState(false);
+  const [showHouseholds, setShowHouseholds] = useState(false);
+  const [mapHouseholds, setMapHouseholds] = useState<any[]>([]);
+  const [householdStats, setHouseholdStats] = useState<{total:number,geocoded:number,pending?:number} | null>(null);
+  const [isGeocodingHouseholds, setIsGeocodingHouseholds] = useState(false);
+  const geocodingLoopActiveRef = useRef(false);
+  const currentBoundsRef = useRef<any>(null);
+
+  // Pipeline conditions (縱走管況)
+  const [showPipelineConditions, setShowPipelineConditions] = useState(false);
+  const [pipelineConditions, setPipelineConditions] = useState<PipelineCondition[]>([]);
+  const [conditionLines, setConditionLines] = useState<ConditionLine[]>([]);
+  const [conditionMap, setConditionMap] = useState<Record<string, PipelineCondition>>({});
+
+  // 淤積管段圖層
+  const [showSedimentation, setShowSedimentation] = useState(false);
+
+  // Flood hotspots (淹水熱區)
+  const [showFloodHotspots, setShowFloodHotspots] = useState(false);
+  const [floodHotspots, setFloodHotspots] = useState<FloodHotspot[]>([]);
+
+  // Water monitors (水情監測站)
+  const [showWaterMonitors, setShowWaterMonitors] = useState(false);
+  const [waterMonitors, setWaterMonitors] = useState<WaterMonitor[]>([]);
+  const [wraStations, setWraStations] = useState<any[]>([]);
+  const [wraInundation, setWraInundation] = useState<any[]>([]);
+  const [wraCctv, setWraCctv] = useState<any[]>([]);
+  const [isFetchingWra, setIsFetchingWra] = useState(false);
+  const [showCctv, setShowCctv] = useState(false);
+
+  // Inspection sites (訪評受評地點)
+  const [showInspectionSites, setShowInspectionSites] = useState(false);
+  const [inspectionSites, setInspectionSites] = useState<InspectionSite[]>([]);
+
+  // 水資源銀行節點 (Water Bank Nodes)
+  const [showWaterBank, setShowWaterBank] = useState(false);
+  const [waterBankNodes, setWaterBankNodes] = useState<WaterBankNode[]>([]);
+
+  // 🌊 潮汐倒灌預警 (Tidal Backflow Risk)
+  const [showTidalRisk, setShowTidalRisk] = useState(false);
+  const [showPredictive, setShowPredictive] = useState(false);
+  const [tidalRiskData, setTidalRiskData] = useState<TidalRiskResponse | null>(null);
+
+  // 輿情與新聞 (Sentiment & News)
+  const [showFloodNews, setShowFloodNews] = useState(false);
+  const [showSentiment, setShowSentiment] = useState(false);
+  const [sentimentData, setSentimentData] = useState<{ posts: any[], news: any[] } | null>(null);
+  const [isFetchingSentiment, setIsFetchingSentiment] = useState(false);
+
+  // 圖層分組展開狀態 (Layer Group Expansion)
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(['維運管理', '防汛預警']);
+
+  const fetchSentiment = async () => {
+    setIsFetchingSentiment(true);
+    try {
+      const res = await fetch('/api/gis/flood-sentiment');
+      if (!res.ok) throw new Error('API error');
+      const data = await res.json();
+      if (data.posts || data.news) {
+        setSentimentData(data);
+      }
+    } catch (err) {
+      console.error('Fetch sentiment error:', err);
+    } finally {
+      setIsFetchingSentiment(false);
+    }
+  };
+
+  const SentimentPanel = () => {
+    if (!showSentiment && !showFloodNews) return null;
+    return (
+      <div style={{
+        position: 'absolute', top: '230px', right: '20px', width: '320px', maxHeight: 'calc(100vh - 280px)',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)', backdropFilter: 'blur(12px)', border: '1px solid var(--glass-border)',
+        borderRadius: '20px', boxShadow: '0 20px 50px rgba(0,0,0,0.15)', zIndex: 4000, overflowY: 'auto',
+        display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+      }}>
+        <div style={{ padding: '20px', borderBottom: '1px solid rgba(0,0,0,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.02), transparent)' }}>
+          <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)' }}>
+            {showSentiment ? '🔥 最新輿情監測' : '📰 歷史新聞回顧'}
+          </h3>
+          <button onClick={() => { setShowSentiment(false); setShowFloodNews(false); }} style={{ background: 'rgba(0,0,0,0.05)', border: 'none', cursor: 'pointer', color: '#64748b', width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.1)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)'}><X size={16} /></button>
+        </div>
+        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {isFetchingSentiment && (
+            <div style={{ textAlign: 'center', padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+              <div className="spinner" style={{ width: '24px', height: '24px', border: '3px solid rgba(0,0,0,0.1)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></div>
+              <div style={{ color: '#64748b', fontSize: '0.9rem', fontWeight: 500 }}>正在即時搜集 Threads/PTT 資料...</div>
+            </div>
+          )}
+          {!isFetchingSentiment && sentimentData && (
+            <>
+              {showSentiment && sentimentData.posts.map((p, i) => (
+                <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: '12px', backgroundColor: 'white', borderRadius: '14px', border: '1px solid rgba(0,0,0,0.05)', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }} onMouseEnter={e => {e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.06)';}} onMouseLeave={e => {e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.02)';}}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#ec4899', backgroundColor: 'rgba(236,72,153,0.1)', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(236,72,153,0.2)' }}>{p.source}</span>
+                    <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500 }}>{p.time}</span>
+                  </div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '6px', color: '#1e293b', lineHeight: '1.4' }}>{p.title}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', lineHeight: '1.5' }}>{p.summary}</div>
+                </a>
+              ))}
+              {(showFloodNews || !showSentiment) && sentimentData.news.map((n, i) => (
+                <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: '12px', backgroundColor: 'white', borderRadius: '14px', border: '1px solid rgba(0,0,0,0.05)', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }} onMouseEnter={e => {e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.06)';}} onMouseLeave={e => {e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.02)';}}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.1)', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(14,165,233,0.2)' }}>{n.source}</span>
+                    <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500 }}>{n.time}</span>
+                  </div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1e293b', lineHeight: '1.4' }}>{n.title}</div>
+                </a>
+              ))}
+            </>
+          )}
+          {!isFetchingSentiment && (!sentimentData || (showSentiment && sentimentData.posts.length === 0) || (showFloodNews && sentimentData.news.length === 0)) && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+              <div style={{ fontSize: '3rem', opacity: 0.2 }}>📭</div>
+              <div style={{ color: '#94a3b8', fontSize: '0.95rem', fontWeight: 500 }}>目前暫無相關討論資料</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  interface TidalRiskAssessment {
+    outletId: number;
+    location: string;
+    town: string;
+    lat: number;
+    lng: number;
+    currentTidalHeight: number;
+    currentRainfall1hr: number;
+    currentRainfall3hr: number;
+    riskLevel: 'red' | 'yellow' | 'green';
+    trend: 'rising' | 'falling' | 'slack';
+    canDischarge: boolean;
+    reason: string;
+    warningDurationHours: number;
+    recommendedAction: string;
+    assessedAt: string;
+    // 預測欄位
+    predictiveRisk: 'high' | 'medium' | 'low';
+    futureTidalHeight2h: number;
+    futureRainProb: number;
+    predictiveReason: string;
+  }
+  interface TidalRiskResponse {
+    success: boolean;
+    statistics: { totalOutlets: number; redRiskCount: number; yellowRiskCount: number; greenRiskCount: number; overallRiskLevel: string };
+    tidalData: Array<{ stationName: string; stationId: string; lat: number; lng: number; currentHeight: number; trend: string }>;
+    weatherData: { rainfall1hr: number; rainfall3hr: number; temperature: number };
+    assessments: TidalRiskAssessment[];
+  }
+  const [tidalRiskLoading, setTidalRiskLoading] = useState(false);
+  const [tidalRiskError, setTidalRiskError] = useState('');
+  const [selectedTidalOutlet, setSelectedTidalOutlet] = useState<TidalRiskAssessment | null>(null);
+
+  // 潮汐數據自動刷新
+  useEffect(() => {
+    if (!showTidalRisk) return;
+
+    const fetchTidalRisk = async () => {
+      setTidalRiskLoading(true);
+      setTidalRiskError('');
+      try {
+        const res = await fetch('/api/gis/tidal-risk');
+        if (!res.ok) throw new Error('Failed to fetch tidal risk data');
+        const data: TidalRiskResponse = await res.json();
+        setTidalRiskData(data);
+      } catch (error) {
+        setTidalRiskError(error instanceof Error ? error.message : 'Unknown error');
+      } finally {
+        setTidalRiskLoading(false);
+      }
+    };
+
+    fetchTidalRisk();
+    const interval = setInterval(fetchTidalRisk, 300000); // 每5分鐘刷新一次
+    return () => clearInterval(interval);
+  }, [showTidalRisk]);
+
+  // 天氣預報 & AI 警示
+  interface AiAlert {
+    level: 'critical' | 'warning' | 'info' | 'safe';
+    icon: string;
+    title: string;
+    message: string;
+    action: string;
+    layerKey: string | null;
+  }
+  interface WeatherForecast { area: string; pop6h: number|null; pop12h: number|null; weatherDesc: string; riskLevel: string; }
+  interface RainfallStation { stationName: string; area: string; rainfall1hr: number|null; rainfall3hr: number|null; }
+  interface WeatherState {
+    overallRisk: string; hasActiveWarning: boolean; fetchedAt: string;
+    forecasts: WeatherForecast[]; rainfallStations: RainfallStation[];
+    warnings: {phenomenonName: string; content: string}[];
+    aiAlerts: AiAlert[];
+  }
+  const [showWeatherPanel, setShowWeatherPanel] = useState(false);
+  const [showRainfallStations, setShowRainfallStations] = useState(false);
+  const [weatherData, setWeatherData] = useState<WeatherState | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+
+  // 年度清淤
+  interface DredgingRoute {
+    id: number; year: string; work_date: string; district: string;
+    road_name: string; total_length: number; manhole_count: number;
+    cistern_count: number; culvert_types: string; lat: number; lng: number;
+    polyline: [number, number][] | null;
+    details: Array<{ culvert_type: string; length_m: number; pipe_ids: string }>;
+  }
+  // 都市計畫區範圍（永久顯示，不列圖層）
+  const [urbanPlanZones, setUrbanPlanZones] = useState<Array<{ properties: { code: string; name: string; short: string }; geometry: { coordinates: number[][][] } }>>([]);
+  useEffect(() => {
+    fetch('/api/gis/urban-plan')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.features) setUrbanPlanZones(d.features); })
+      .catch(() => {});
+  }, []);
+
+  const [showDredging, setShowDredging] = useState(false);
+  const [dredgingYear, setDredgingYear] = useState<string>('all');
+  const [dredgingRoutes, setDredgingRoutes] = useState<DredgingRoute[]>([]);
+  const [dredgingSummary, setDredgingSummary] = useState<any>(null);
+
+  // 塞管通報（開口契約歷史紀錄）
+  const [pipeReports, setPipeReports] = useState<PipeReport[]>([]);
+  const [pipeReportFilter, setPipeReportFilter] = useState<string>('all');
+  const [complaintTab, setComplaintTab] = useState<'current' | 'history'>('current');
+  const [historySearch, setHistorySearch] = useState('');
+  // 人孔附近塞管通報
+  const [manholeNearbyReports, setManholeNearbyReports] = useState<Record<number, PipeReport[]>>({});
+
+  // Connection check state (GIS search bar)
+  const [connectionResult, setConnectionResult] = useState<{connected:boolean,count:number,records:any[],query:string,total:number} | null>(null);
+  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+  // Connection check state (complaint form)
+  const [formConnectionResult, setFormConnectionResult] = useState<{connected:boolean,count:number,records:any[],query:string,total:number} | null>(null);
+  const [isCheckingFormConnection, setIsCheckingFormConnection] = useState(false);
+
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(false);
+  const [gpsLocation, setGpsLocation] = useState<[number, number] | null>(null);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [showMobileLayers, setShowMobileLayers] = useState(false);
+  const mapRef = useRef<any>(null);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  const handleGPS = () => {
+    if (!navigator.geolocation) return;
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        setGpsLocation(coords);
+        setMapCenter(coords);
+        setGpsLoading(false);
+      },
+      () => { setGpsLoading(false); alert('無法取得位置，請確認已開啟定位權限'); },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // New: Address Search, Street View & Selection State
+  const [mapCenter, setMapCenter] = useState<[number, number]>([24.83, 121.03]);
+  const [addressSearch, setAddressSearch] = useState('');
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [showStreetView, setShowStreetView] = useState(false);
+  const [streetViewCoords, setStreetViewCoords] = useState<[number, number] | null>(null);
+  const [clickCoords, setClickCoords] = useState<[number, number] | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<any | null>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Autocomplete Suggestions logic
+  useEffect(() => {
+    const handler = setTimeout(async () => {
+      if (addressSearch.trim().length < 2) {
+        setSuggestions([]);
+        return;
+      }
+      setIsFetchingSuggestions(true);
+      try {
+        const res = await fetch(`/api/gis/search-suggestions?q=${encodeURIComponent(addressSearch)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSuggestions(data);
+        }
+      } catch (e) { console.error(e); }
+      finally { setIsFetchingSuggestions(false); }
+    }, 400);
+
+    return () => clearTimeout(handler);
+  }, [addressSearch]);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSelectSuggestion = (s: any) => {
+    setAddressSearch(s.title);
+    setMapCenter([s.lat, s.lng]);
+    setClickCoords([s.lat, s.lng]);
+    setShowSuggestions(false);
+    if (s.type === 'asset') {
+      // If it's a specific asset, we could potentially select it here, 
+      // but for now just positioning is a great start.
+    }
+  };
+
+  const handleAddressSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addressSearch.trim()) return;
+    setIsSearchingAddress(true);
+    
+    // Auto-complete with Hsinchu County if not present to improve local search reliability
+    let query = addressSearch.trim();
+    if (!query.includes('新竹') && !query.includes('竹北') && !query.includes('竹東')) {
+      query = '新竹縣' + query;
+    }
+
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=tw&limit=1`, {
+        headers: { 
+          'Accept-Language': 'zh-TW',
+          'User-Agent': 'SewerageManagementSystem/1.0 (fly@example.com)'
+        }
+      });
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lon = parseFloat(data[0].lon);
+        setMapCenter([lat, lon]);
+        setClickCoords([lat, lon]); // Drop a temporary marker at search result
+      } else {
+        alert('找不到該地址，請嘗試輸入更完整的地址。如果是路段請包含鄉鎮市名稱，例如：竹北市光明六路');
+      }
+    } catch (e) {
+      console.error('Geocoding error:', e);
+      alert('地圖定位服務暫時無法連線。');
+    } finally {
+      setIsSearchingAddress(false);
+    }
+    // Also check connection status (runs in parallel, no await)
+    checkConnection(addressSearch.trim());
+  };
+
+  const openStreetView = (lat: number, lng: number) => {
+    const latNum = typeof lat === 'string' ? parseFloat(lat) : lat;
+    const lngNum = typeof lng === 'string' ? parseFloat(lng) : lng;
+    if (isNaN(latNum) || isNaN(lngNum)) return;
+    setStreetViewCoords([latNum, lngNum]);
+    setShowStreetView(true);
+  };
+
+  const checkConnection = async (addr: string) => {
+    if (!addr || addr.trim().length < 3) return;
+    setIsCheckingConnection(true);
+    setConnectionResult(null);
+    try {
+      const res = await fetch(`/api/gis/check-connection?addr=${encodeURIComponent(addr.trim())}`);
+      if (res.ok) setConnectionResult(await res.json());
+    } catch (e) { console.error(e); }
+    finally { setIsCheckingConnection(false); }
+  };
+
+  const checkFormConnection = async (addr: string) => {
+    if (!addr || addr.trim().length < 4) { setFormConnectionResult(null); return; }
+    setIsCheckingFormConnection(true);
+    setFormConnectionResult(null);
+    try {
+      const res = await fetch(`/api/gis/check-connection?addr=${encodeURIComponent(addr.trim())}`);
+      if (res.ok) setFormConnectionResult(await res.json());
+    } catch (e) { console.error(e); }
+    finally { setIsCheckingFormConnection(false); }
+  };
+
+  const fetchMapData = useCallback(async (bounds?: any) => {
+    const b = bounds || currentBoundsRef.current;
+    if (!b) return;
+    currentBoundsRef.current = b;
+    setMapLoading(true);
+    try {
+      const params = new URLSearchParams({
+        system_type: systemType,
+        min_lat: String(b.min_lat), max_lat: String(b.max_lat),
+        min_lng: String(b.min_lng), max_lng: String(b.max_lng),
+      });
+      const res = await fetch(`/api/gis/map-data?${params}`);
+      if (res.ok) {
+        const d = await res.json();
+        setMapManholes(d.manholes || []);
+        setMapPipelines(d.pipelines || []);
+        setMapError(null);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setMapError(`API 錯誤 ${res.status}: ${errData.details || errData.error || '未知錯誤'}`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setMapError(`連線錯誤: ${e?.message || String(e)}`);
+    }
+    finally { setMapLoading(false); }
+  }, [systemType]);
+
+  const fetchHouseholds = useCallback(async (bounds?: any) => {
+    const b = bounds || currentBoundsRef.current;
+    if (!b) return;
+    try {
+      const params = new URLSearchParams({
+        min_lat: String(b.min_lat), max_lat: String(b.max_lat),
+        min_lng: String(b.min_lng), max_lng: String(b.max_lng),
+      });
+      const res = await fetch(`/api/gis/household-connections?${params}`);
+      if (res.ok) {
+        const d = await res.json();
+        setMapHouseholds(d.households || []);
+        if (d.stats) setHouseholdStats(d.stats);
+      }
+    } catch (e) { console.error(e); }
+  }, []);
+
+  const fetchPipelineConditions = useCallback(async (bounds?: any) => {
+    try {
+      // 1. Fetch summary stats (for the status bar count)
+      const res = await fetch('/api/gis/pipeline-conditions');
+      if (res.ok) {
+        const d = await res.json();
+        const conditions: PipelineCondition[] = d.conditions || [];
+        setPipelineConditions(conditions);
+        const m: Record<string, PipelineCondition> = {};
+        conditions.forEach(c => { m[c.p_no] = c; });
+        setConditionMap(m);
+      }
+    } catch (e) { console.error('fetchPipelineConditions error:', e); }
+
+    // 2. Fetch condition lines with coordinates (bbox-aware)
+    try {
+      const b = bounds || currentBoundsRef.current;
+      const bParams = b
+        ? `&min_lat=${b.min_lat}&max_lat=${b.max_lat}&min_lng=${b.min_lng}&max_lng=${b.max_lng}`
+        : '';
+      const res2 = await fetch(`/api/gis/pipeline-conditions-map?dummy=1${bParams}`);
+      if (res2.ok) {
+        const d2 = await res2.json();
+        setConditionLines(d2.conditions || []);
+      }
+    } catch (e) { console.error('fetchConditionLines error:', e); }
+  }, []);
+
+  const fetchFloodHotspots = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/flood-hotspots');
+      if (res.ok) {
+        const d = await res.json();
+        setFloodHotspots(d.hotspots || []);
+      }
+    } catch (e) { console.error('fetchFloodHotspots error:', e); }
+  }, []);
+
+  const fetchWaterMonitors = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/water-monitors');
+      if (res.ok) {
+        const d = await res.json();
+        setWaterMonitors(d.monitors || []);
+      }
+    } catch (e) { console.error('fetchWaterMonitors error:', e); }
+
+    // Also fetch WRA IoT Stations
+    setIsFetchingWra(true);
+    try {
+      const res = await fetch('/api/wra-iot/stations');
+      if (res.ok) {
+        const d = await res.json();
+        setWraStations(d.riverStations || []);
+        setWraInundation(d.inundationStations || []);
+        setWraCctv(d.cctvStations || []);
+      }
+    } catch (e) { console.error('fetchWraStations error:', e); }
+    finally { setIsFetchingWra(false); }
+  }, []);
+
+  const fetchInspectionSites = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/inspection-sites');
+      if (res.ok) {
+        const d = await res.json();
+        setInspectionSites(d.sites || []);
+      }
+    } catch (e) { console.error('fetchInspectionSites error:', e); }
+  }, []);
+
+  const fetchWaterBankNodes = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gis/water-bank-nodes');
+      if (res.ok) {
+        const d = await res.json();
+        setWaterBankNodes(d.nodes || []);
+      }
+    } catch (e) { console.error('fetchWaterBankNodes error:', e); }
+  }, []);
+
+  const fetchWeather = useCallback(async () => {
+    setWeatherLoading(true);
+    setWeatherError(null);
+    try {
+      const res = await fetch('/api/gis/weather');
+      if (!res.ok) throw new Error('風險資料取得失敗');
+      const data = await res.json();
+      setWeatherData(data);
+    } catch (err: any) {
+      setWeatherError(err.message);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
+
+  const handleAiAlertClick = (alert: AiAlert) => {
+    if (!alert.layerKey) return;
+    
+    // Toggle relevant layers based on AI recommendation
+    if (alert.layerKey === 'watermonitor') {
+      setShowWaterMonitors(true);
+      if (wraStations.length === 0) fetchWaterMonitors();
+    } else if (alert.layerKey === 'floods') {
+      setShowFloodHotspots(true);
+      if (floodHotspots.length === 0) fetchFloodHotspots();
+    } else if (alert.layerKey === 'tidalrisk') {
+      setShowTidalRisk(true);
+    }
+    
+    // Auto-expand the prevention group if it's not expanded
+    if (!expandedGroups.includes('🌊 防汛預警')) {
+      setExpandedGroups(prev => [...prev, '🌊 防汛預警']);
+    }
+  };
+
+  const fetchPipeReports = useCallback(async (type: string = 'all') => {
+    try {
+      const res = await fetch(`/api/gis/pipe-reports?type=${encodeURIComponent(type)}`);
+      if (res.ok) {
+        const d = await res.json();
+        setPipeReports(d.reports || []);
+      }
+    } catch (e) { console.error('fetchPipeReports error:', e); }
+  }, []);
+
+  const fetchDredgingRoutes = useCallback(async (year?: string) => {
+    try {
+      const yr = year ?? dredgingYear;
+      const url = yr === 'all' ? '/api/gis/dredging-routes' : `/api/gis/dredging-routes?year=${yr}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const d = await res.json();
+        setDredgingRoutes(d.routes || []);
+        setDredgingSummary(d.summary || null);
+      }
+    } catch (e) { console.error('fetchDredgingRoutes error:', e); }
+  }, [dredgingYear]);
+
+  const fetchNearbyReports = useCallback(async (manholeId: number, lat: number, lng: number) => {
+    if (manholeNearbyReports[manholeId]) return; // 已載入過
+    try {
+      const res = await fetch(`/api/gis/pipe-reports/nearby?lat=${lat}&lng=${lng}&radius=0.004`);
+      if (res.ok) {
+        const d = await res.json();
+        setManholeNearbyReports(prev => ({ ...prev, [manholeId]: d.reports || [] }));
+      }
+    } catch (e) { console.error('fetchNearbyReports error:', e); }
+  }, [manholeNearbyReports]);
+
+  const startAutoGeocode = useCallback(async () => {
+    // Prevent multiple loops running simultaneously
+    if (geocodingLoopActiveRef.current) return;
+    geocodingLoopActiveRef.current = true;
+    setIsGeocodingHouseholds(true);
+    try {
+      while (geocodingLoopActiveRef.current) {
+        const res = await fetch('/api/gis/geocode-households', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchSize: 30 }),
+        });
+        if (!res.ok) break;
+        const d = await res.json();
+        if (d.stats) setHouseholdStats(d.stats);
+        // Refresh map markers after each batch
+        await fetchHouseholds();
+        // Stop when nothing left to process
+        if (d.processed === 0) break;
+        // Small pause between batches so UI stays responsive
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } catch (e) { console.error('Geocoding loop error:', e); }
+    finally {
+      geocodingLoopActiveRef.current = false;
+      setIsGeocodingHouseholds(false);
+      // Final refresh
+      fetchHouseholds();
+    }
+  }, [fetchHouseholds]);
+
+  const fetchProjectScopes = useCallback(async () => {
+    try {
+      const res = await fetch('/api/projects/scopes');
+      if (res.ok) setProjectScopes(await res.json());
+    } catch(e) { console.error(e); }
+  }, []);
+
+  const fetchComplaints = useCallback(async () => {
+    try {
+      const res = await fetch('/api/complaints');
+      if (res.ok) {
+        const d = await res.json();
+        // Keep all for the list, but filter for map
+        setComplaints(d);
+      }
+    } catch(e) { console.error(e); }
+  }, []);
+
+  const handleCompInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    if (editingId !== null) {
+      setEditData(prev => ({ ...prev, [name]: value }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const handleCompSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      if (editingId !== null) {
+        const res = await fetch(`/api/complaints/${editingId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(editData)
+        });
+        if (res.ok) {
+          setEditingId(null);
+          fetchComplaints();
+        }
+      } else {
+        const res = await fetch('/api/complaints', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData)
+        });
+        if (res.ok) {
+          setFormData({ reporter_name: '', phone: '', address: '', description: '', status: 'pending' });
+          setIsFormOpen(false);
+          fetchComplaints();
+        }
+      }
+    } catch (error) {
+      console.error('Operation failed:', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCompDelete = async (id: number) => {
+    if (!confirm('確定要刪除此陳情紀錄嗎？')) return;
+    try {
+      const res = await fetch(`/api/complaints/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchComplaints();
+    } catch (error) {
+      console.error('Failed to delete complaint:', error);
+    }
+  };
+
+  const handleExportEmic = (comp: Complaint) => {
+    const emicData = {
+      CaseNo: `SEW-${comp.id}-${new Date(comp.reported_at).getTime()}`,
+      CaseType: "下水道阻塞/溢流",
+      Location: comp.address,
+      Coordinates: { lat: comp.lat || null, lng: comp.lng || null },
+      Reporter: comp.reporter_name,
+      Contact: comp.phone,
+      Description: comp.description,
+      Status: mapToEmicStatus(comp.status),
+      ReportTime: comp.reported_at,
+      Resolution: comp.resolution_notes || ""
+    };
+    
+    const blob = new Blob([JSON.stringify(emicData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `EMIC_Report_${comp.id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const startCompEditing = (complaint: Complaint) => {
+    setEditingId(complaint.id);
+    setEditData({ status: complaint.status, resolution_notes: complaint.resolution_notes || '' });
+    setIsFormOpen(true);
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch(status) {
+      case 'pending': return { label: '待處理', color: 'var(--danger)', icon: Clock };
+      case 'processing': return { label: '處理中', color: '#f59e0b', icon: Clock };
+      case 'resolved': return { label: '已解決', color: 'var(--success)', icon: CheckCircle };
+      default: return { label: status, color: 'var(--text-muted)', icon: Clock };
+    }
+  };
+
+  const filteredComplaintsList = complaints.filter(c => {
+    const matchStatus = filterStatus === '全部' || 
+                       (filterStatus === '待處理' && c.status === 'pending') ||
+                       (filterStatus === '處理中' && c.status === 'processing') ||
+                       (filterStatus === '已解決' && c.status === 'resolved');
+    const matchSearch = c.address.includes(compSearchTerm) || c.reporter_name.includes(compSearchTerm);
+    return matchStatus && matchSearch;
+  });
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ type, systemType, page: String(page) });
+      if (searchTerm) params.set('q', searchTerm);
+      if (areaFilter) params.set('area', areaFilter);
+      const res = await fetch(`/api/gis?${params}`);
+      if (res.ok) {
+        const d = await res.json();
+        setData(d.data);
+        setTotal(d.total);
+      }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, [type, systemType, page, searchTerm, areaFilter]);
+
+  useEffect(() => {
+    if (viewMode === 'table') fetchData();
+    else {
+      fetchProjectScopes();
+      fetchComplaints();
+      // Load household stats (without geocoded points until layer is toggled on)
+      fetch('/api/gis/geocode-households').then(r => r.json()).then(d => setHouseholdStats(d)).catch(() => {});
+      // Trigger initial map load with Zhubei default bounds
+      const defaultBounds = { min_lat: 24.78, max_lat: 24.88, min_lng: 120.98, max_lng: 121.08 };
+      fetchMapData(defaultBounds);
+    }
+  }, [fetchData, fetchProjectScopes, fetchComplaints, viewMode, fetchMapData]);
+
+  // Re-fetch when systemType changes in map mode
+  useEffect(() => {
+    if (viewMode === 'map') fetchMapData();
+  }, [systemType, viewMode, fetchMapData]);
+
+  const totalPages = Math.ceil(total / 50);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPage(1);
+    fetchData();
+  };
+
+  const materialLabel = (m: string) => {
+    const map: Record<string, string> = {
+      'PVCP': 'PVC管', 'RCP': '鋼筋混凝土管', 'DIP': '延性鑄鐵管',
+      'DICP': '延性鑄鐵管', 'PE': 'PE管', 'HDPE': 'HDPE管', 'VCP': '陶管'
+    };
+    return map[m] || m;
+  };
+
+  if (!isMounted) return <div style={{ padding: '40px', textAlign: 'center' }}>載入中...</div>;
+
+  return (
+    <>
+    <style>{`
+      @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.4); } }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* ── Mobile Responsive ───────────────────────────── */
+      @media (max-width: 767px) {
+        .gis-main { padding: 8px !important; max-width: 100% !important; }
+        .gis-header { margin-bottom: 10px !important; }
+        .gis-header h1 { font-size: 1.1rem !important; }
+        .gis-header-right { display: none !important; }
+        .gis-glass { padding: 10px !important; }
+        .gis-controls-row { gap: 6px !important; margin-bottom: 10px !important; }
+        .gis-system-btn { padding: 8px 12px !important; font-size: 0.85rem !important; }
+        .gis-viewmode-btn { padding: 8px 12px !important; font-size: 0.85rem !important; }
+        .gis-search-bar { margin-bottom: 8px !important; }
+        .gis-search-input { font-size: 0.95rem !important; }
+        .gis-search-btn { padding: 0 12px !important; font-size: 0.85rem !important; white-space: nowrap; }
+        .gis-map-container { height: calc(100dvh - 170px) !important; min-height: 400px; }
+        .gis-layer-row { flex-wrap: nowrap !important; overflow-x: auto !important; padding-bottom: 4px; gap: 6px !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+        .gis-layer-row::-webkit-scrollbar { display: none; }
+        .gis-layer-btn { padding: 6px 10px !important; font-size: 0.8rem !important; white-space: nowrap; flex-shrink: 0; }
+        .gis-status-text { display: none !important; }
+        .gis-manage-btns { display: none !important; }
+        .leaflet-popup-content-wrapper { max-width: 85vw !important; font-size: 0.88rem !important; }
+        .leaflet-popup-content { margin: 10px 12px !important; }
+        .gis-sidebar { width: 100% !important; height: 60vh !important; top: auto !important; bottom: 0 !important; border-left: none !important; border-top: 1px solid var(--glass-border) !important; border-radius: 16px 16px 0 0 !important; box-shadow: 0 -4px 20px rgba(0,0,0,0.15) !important; }
+        .gis-complaint-table td, .gis-complaint-table th { padding: 4px 6px !important; font-size: 0.78rem !important; }
+        .gis-connection-table { font-size: 0.78rem !important; }
+      }
+    `}</style>
+    <main className="gis-main" style={{ maxWidth: '1400px', margin: '0 auto', padding: '40px 24px' }}>
+      <header className="gis-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <Link href="/" style={{ padding: '8px', backgroundColor: 'var(--glass-bg)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--glass-border)' }}>
+            <ArrowLeft size={24} color="var(--primary)" />
+          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ backgroundColor: '#8b5cf6', padding: '10px', borderRadius: '12px', color: 'white' }}>
+              <Database size={isMobile ? 20 : 28} />
+            </div>
+            <h1 className="page-title gis-header-title" style={{ margin: 0, background: 'linear-gradient(135deg, #8b5cf6, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              管線資料庫查詢
+            </h1>
+          </div>
+        </div>
+        <div className="gis-header-right" style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+          共 <strong style={{ color: 'var(--text-main)' }}>{total.toLocaleString()}</strong> 筆資料
+        </div>
+      </header>
+
+      <div className="glass-panel gis-glass" style={{ padding: '24px' }}>
+        {/* Controls Group */}
+        <div className="gis-controls-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+
+          <div style={{ display: 'flex', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--glass-border)', overflow: 'hidden' }}>
+            <button className="gis-system-btn" onClick={() => { setSystemType('污水'); setPage(1); }} style={{ padding: '10px 24px', backgroundColor: systemType === '污水' ? '#3b82f6' : 'transparent', color: systemType === '污水' ? 'white' : 'var(--text-main)', fontWeight: systemType === '污水' ? '600' : '400', border: 'none', cursor: 'pointer' }}>污水系統</button>
+            <button className="gis-system-btn" onClick={() => { setSystemType('雨水'); setPage(1); }} style={{ padding: '10px 24px', backgroundColor: systemType === '雨水' ? '#0ea5e9' : 'transparent', color: systemType === '雨水' ? 'white' : 'var(--text-main)', fontWeight: systemType === '雨水' ? '600' : '400', border: 'none', cursor: 'pointer' }}>雨水系統</button>
+          </div>
+
+          {viewMode === 'table' && (
+            <div style={{ display: 'flex', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--glass-border)', overflow: 'hidden' }}>
+              <button onClick={() => { setType('pipelines'); setPage(1); }} style={{ padding: '10px 24px', backgroundColor: type === 'pipelines' ? '#8b5cf6' : 'transparent', color: type === 'pipelines' ? 'white' : 'var(--text-main)', fontWeight: type === 'pipelines' ? '600' : '400', border: 'none', cursor: 'pointer' }}>管線資料</button>
+              <button onClick={() => { setType('manholes'); setPage(1); }} style={{ padding: '10px 24px', backgroundColor: type === 'manholes' ? '#8b5cf6' : 'transparent', color: type === 'manholes' ? 'white' : 'var(--text-main)', fontWeight: type === 'manholes' ? '600' : '400', border: 'none', cursor: 'pointer' }}>人孔/陰井資料</button>
+            </div>
+          )}
+
+          {viewMode === 'table' && (
+            <>
+              {/* Area Filter */}
+              <select value={areaFilter} onChange={(e) => { setAreaFilter(e.target.value); setPage(1); }} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', fontSize: '1rem' }}>
+                <option value="">全部區域</option>
+                <option value="竹北一期">竹北一期</option>
+                <option value="竹北二期">竹北二期</option>
+                <option value="竹東二期">竹東二期</option>
+                <option value="竹東(台泥重劃區)">竹東(台泥重劃區)</option>
+              </select>
+
+              {/* Search */}
+              <form onSubmit={handleSearch} style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-color)', borderRadius: '8px', padding: '8px 16px', border: '1px solid var(--glass-border)', flexGrow: 1 }}>
+                <Search size={20} color="var(--text-muted)" style={{ marginRight: '12px' }} />
+                <input
+                  type="text" placeholder={type === 'pipelines' ? '搜尋管線編號、工程名稱、材質、廠商...' : '搜尋人孔編號、位置、工程名稱...'}
+                  value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', fontSize: '1rem', color: 'var(--text-main)' }}
+                />
+                <button type="submit" className="btn-primary" style={{ backgroundColor: '#8b5cf6', padding: '8px 16px', fontSize: '0.9rem' }}>搜尋</button>
+              </form>
+            </>
+          )}
+
+          {/* View Mode Toggle */}
+          <div style={{ display: 'flex', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px solid var(--glass-border)', overflow: 'hidden', marginLeft: 'auto' }}>
+            {!isMobile && (
+              <button className="gis-viewmode-btn" onClick={() => setViewMode('table')} style={{ padding: '10px 24px', backgroundColor: viewMode === 'table' ? 'var(--primary)' : 'transparent', color: viewMode === 'table' ? 'white' : 'var(--text-main)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: viewMode === 'table' ? '600' : '400' }}>
+                <Database size={18} /> 表格檢視
+              </button>
+            )}
+            <button className="gis-viewmode-btn" onClick={() => setViewMode('map')} style={{ padding: '10px 24px', backgroundColor: viewMode === 'map' ? 'var(--success)' : 'transparent', color: viewMode === 'map' ? 'white' : 'var(--text-main)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: viewMode === 'map' ? '600' : '400' }}>
+              <Map size={18} /> {isMobile ? '地圖' : '地圖檢視'}
+            </button>
+          </div>
+        </div>
+
+        {/* Content Render Based on ViewMode */}
+        {viewMode === 'map' && typeof window !== 'undefined' ? (
+          <div style={{ position: 'relative' }}>
+            {/* GIS Address Search Bar */}
+            <form className="gis-search-bar" onSubmit={handleAddressSearch} style={{ display: 'flex', marginBottom: '16px', gap: '8px', position: 'relative' }}>
+              <div style={{ flexGrow: 1, position: 'relative' }}>
+                <Search size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '16px', top: '12px', zIndex: 10 }} />
+                <input
+                  className="gis-search-input"
+                  type="text"
+                  placeholder={isMobile ? "搜尋路名/人孔..." : "輸入路名、人孔位置或地址 (模糊搜尋)..."}
+                  value={addressSearch}
+                  autoComplete="off"
+                  onChange={(e) => { 
+                    const val = e.target.value;
+                    setAddressSearch(val); 
+                    if (val.trim()) {
+                      setShowSuggestions(true);
+                    } else {
+                      setShowSuggestions(false);
+                    }
+                  }}
+                  onFocus={() => { if (addressSearch.trim()) setShowSuggestions(true); }}
+                  style={{ width: '100%', padding: '10px 16px 10px 42px', borderRadius: '8px', border: '1px solid var(--glass-border)', backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', fontSize: '1rem', outline: 'none' }}
+                />
+                
+                {/* Suggestions Dropdown */}
+                {showSuggestions && (addressSearch.trim().length >= 2) && (
+                  <div 
+                    ref={suggestionsRef}
+                    style={{ position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: 'white', borderRadius: '12px', marginTop: '8px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)', border: '1px solid var(--glass-border)', zIndex: 3000, overflow: 'hidden' }}
+                  >
+                    {isFetchingSuggestions && (
+                      <div style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        <div className="spinner" style={{ width: '16px', height: '16px', border: '2px solid rgba(0,0,0,0.1)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></div>
+                        正在搜尋建議...
+                      </div>
+                    )}
+                    {!isFetchingSuggestions && suggestions.length === 0 && (
+                      <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center' }}>
+                        找不到相符的建議
+                      </div>
+                    )}
+                    {!isFetchingSuggestions && suggestions.map((s, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => handleSelectSuggestion(s)}
+                        style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: idx === suggestions.length - 1 ? 'none' : '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: '12px', transition: 'background-color 0.2s' }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                      >
+                        <div style={{ color: s.type === 'asset' ? 'var(--primary)' : 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+                          {s.type === 'asset' ? <Database size={18} /> : <MapPin size={18} />}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '600', fontSize: '0.95rem', color: '#1e293b' }}>{s.title}</div>
+                          {s.subtitle && <div style={{ fontSize: '0.75rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}>{s.subtitle}</div>}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: s.type === 'asset' ? 'var(--primary)' : 'var(--text-muted)', backgroundColor: s.type === 'asset' ? 'rgba(139,92,246,0.1)' : '#f1f5f9', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                          {s.type === 'asset' ? '設施' : '地址'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button className="gis-search-btn" disabled={isSearchingAddress} type="submit" style={{ padding: '0 24px', borderRadius: '8px', backgroundColor: '#8b5cf6', color: 'white', border: 'none', fontWeight: 'bold', cursor: isSearchingAddress ? 'wait' : 'pointer', transition: 'all 0.2s', opacity: isSearchingAddress ? 0.7 : 1, whiteSpace: 'nowrap' }}>
+                {isSearchingAddress ? '定位中...' : (isMobile ? '📍' : '📍 地址定位')}
+              </button>
+              <button
+                className="gis-search-btn"
+                type="button"
+                disabled={isCheckingConnection || !addressSearch.trim()}
+                onClick={() => checkConnection(addressSearch.trim())}
+                style={{ padding: '0 20px', borderRadius: '8px', backgroundColor: isCheckingConnection ? '#6ee7b7' : '#10b981', color: 'white', border: 'none', fontWeight: 'bold', cursor: (isCheckingConnection || !addressSearch.trim()) ? 'not-allowed' : 'pointer', transition: 'all 0.2s', opacity: !addressSearch.trim() ? 0.5 : 1, whiteSpace: 'nowrap' }}
+              >
+                {isCheckingConnection ? '查詢中...' : (isMobile ? '🏠' : '🏠 查接管')}
+              </button>
+            </form>
+
+            {/* Connection Check Result Panel */}
+            {(isCheckingConnection || connectionResult) && (
+              <div style={{
+                marginBottom: '12px', padding: '12px 16px', borderRadius: '10px',
+                border: `1.5px solid ${connectionResult?.connected ? '#10b981' : connectionResult ? '#ef4444' : '#d1d5db'}`,
+                backgroundColor: connectionResult?.connected ? '#f0fdf4' : connectionResult ? '#fff1f2' : '#f9fafb',
+                display: 'flex', flexDirection: 'column', gap: '8px'
+              }}>
+                {isCheckingConnection && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#6b7280', fontSize: '0.9rem' }}>
+                    <div style={{ width: '14px', height: '14px', border: '2px solid #d1d5db', borderTopColor: '#8b5cf6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    查詢接管資料中...
+                  </div>
+                )}
+                {!isCheckingConnection && connectionResult && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontSize: '1.2rem' }}>{connectionResult.connected ? '✅' : '❌'}</span>
+                      <div>
+                        <strong style={{ fontSize: '1rem', color: connectionResult.connected ? '#065f46' : '#991b1b' }}>
+                          {connectionResult.connected
+                            ? `已接管（找到 ${connectionResult.count} 筆記錄）`
+                            : '查無接管資料'}
+                        </strong>
+                        <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '2px' }}>
+                          查詢關鍵字：{connectionResult.query || addressSearch}
+                        </div>
+                      </div>
+                      <button onClick={() => setConnectionResult(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '1.1rem' }}>✕</button>
+                    </div>
+                    {connectionResult.connected && connectionResult.records.length > 0 && (
+                      <div style={{ maxHeight: '160px', overflowY: 'auto', marginTop: '4px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'rgba(16,185,129,0.1)' }}>
+                              <th style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, color: '#065f46' }}>水號</th>
+                              <th style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, color: '#065f46' }}>用水地址</th>
+                              <th style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, color: '#065f46' }}>來源</th>
+                              <th style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, color: '#065f46' }}>清冊</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {connectionResult.records.map((r: any, i: number) => (
+                              <tr key={i} style={{ borderBottom: '1px solid #d1fae5' }}>
+                                <td style={{ padding: '4px 8px', fontFamily: 'monospace', color: '#059669', fontWeight: 500 }}>{r.water_no}</td>
+                                <td style={{ padding: '4px 8px', color: '#374151' }}>{r.usage_addr}</td>
+                                <td style={{ padding: '4px 8px', color: '#6b7280' }}>{r.source}</td>
+                                <td style={{ padding: '4px 8px', color: '#6b7280' }}>{r.sheet}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {connectionResult.total > 20 && (
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280', padding: '4px 8px', fontStyle: 'italic' }}>
+                            （僅顯示前 20 筆，共 {connectionResult.total} 筆）
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* GIS Map Controls Panel */}
+            <div className="gis-controls-panel" style={{ 
+              display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px',
+              padding: '16px', borderRadius: '20px', backgroundColor: 'var(--glass-bg)',
+              border: '1px solid var(--glass-border)', backdropFilter: 'blur(12px)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.05)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Layers size={18} color="var(--primary)" />
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '700', color: 'var(--text-main)' }}>圖層管理與工具</h3>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => { setEditingId(null); setFormData({ reporter_name: '', phone: '', address: '', description: '', status: 'pending' }); setIsFormOpen(true); }}
+                    style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#ec4899', color: 'white', border: 'none', fontWeight: '600', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Plus size={14} /> 新增通報
+                  </button>
+                  <button
+                    onClick={() => { setShowComplaintsSidebar(!showComplaintsSidebar); if (!showComplaintsSidebar && pipeReports.length === 0) fetchPipeReports('all'); }}
+                    style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: 'var(--danger)', color: 'white', border: 'none', fontWeight: '600', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <MessageSquareWarning size={14} /> {showComplaintsSidebar ? '隱藏清單' : '通報管理'}
+                  </button>
+                </div>
+              </div>
+
+            {/* Grouped Layer Toggles (Plan A) */}
+            <div className="gis-layers-container" style={{ 
+              display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px',
+              backgroundColor: 'rgba(255,255,255,0.4)', padding: '12px', borderRadius: '16px',
+              border: '1px solid var(--glass-border)'
+            }}>
+              {(systemType === '污水' ? [
+                {
+                  id: 'infra', label: '🏗️ 基礎設施', icon: <Briefcase size={14} />,
+                  layers: [
+                    { key: 'manholes', label: '🟣 人孔點位', color: '#8b5cf6', state: showManholes, set: setShowManholes },
+                    { key: 'pipelines', label: '🔵 管線路徑', color: '#3b82f6', state: showPipelines, set: setShowPipelines },
+                    { key: 'households', label: '🟢 接管戶', color: '#10b981', state: showHouseholds, set: (v: boolean) => { setShowHouseholds(v); if (v) { fetchHouseholds(); startAutoGeocode(); } else { geocodingLoopActiveRef.current = false; } } },
+                  ]
+                },
+                {
+                  id: 'maintenance', label: '⚠️ 維運管理', icon: <Wrench size={14} />,
+                  layers: [
+                    { key: 'complaints', label: '🔴 塞管通報', color: '#ef4444', state: showComplaints || showHistoryReports, set: (v: boolean) => { setShowComplaints(v); setShowHistoryReports(v); if (v && pipeReports.length === 0) fetchPipeReports('all'); } },
+                  ]
+                }
+              ] : [
+                {
+                  id: 'infra', label: '🏗️ 基礎設施', icon: <Briefcase size={14} />,
+                  layers: [
+                    { key: 'manholes', label: '🔵 人孔點位', color: '#0ea5e9', state: showManholes, set: setShowManholes },
+                    { key: 'pipelines', label: '🔷 管線路徑', color: '#3b82f6', state: showPipelines, set: setShowPipelines },
+                    { key: 'catchbasins', label: '🟡 集水井', color: '#f59e0b', state: showCatchBasins, set: setShowCatchBasins },
+                  ]
+                },
+                {
+                  id: 'maintenance', label: '⚠️ 維運管理', icon: <Wrench size={14} />,
+                  layers: [
+                    { key: 'inspection_combined', label: '🔍 管線巡查/淤積', color: '#f97316', state: showPipelineConditions || showSedimentation, set: (v: boolean) => { 
+                      setShowPipelineConditions(v); 
+                      setShowSedimentation(v); 
+                      if (v) fetchPipelineConditions(currentBoundsRef.current); 
+                    } },
+                    { key: 'dredging', label: '🚿 年度清淤', color: '#16a34a', state: showDredging, set: (v: boolean) => { setShowDredging(v); if (v) { fetchDredgingRoutes(dredgingYear); setShowPipelines(true); } } },
+                    { key: 'inspection', label: '📋 訪評地點', color: '#7c3aed', state: showInspectionSites, set: (v: boolean) => { setShowInspectionSites(v); if (v && inspectionSites.length === 0) fetchInspectionSites(); } },
+                  ]
+                },
+                {
+                  id: 'prevention', label: '🌊 防汛預警', icon: <ShieldAlert size={14} />,
+                  layers: [
+                    { key: 'watermonitor', label: '💧 水情監測', color: '#0284c7', state: showWaterMonitors, set: (v: boolean) => { setShowWaterMonitors(v); if (v && wraStations.length === 0) fetchWaterMonitors(); } },
+                    { key: 'wra-cctv', label: '📷 影像監視 (CCTV)', color: '#f59e0b', state: showCctv, set: (v: boolean) => { setShowCctv(v); if (v && wraCctv.length === 0) fetchWaterMonitors(); } },
+                    { key: 'floods', label: '🌊 淹水熱區', color: '#0891b2', state: showFloodHotspots, set: (v: boolean) => { setShowFloodHotspots(v); if (v && floodHotspots.length === 0) fetchFloodHotspots(); } },
+                    { key: 'tidalrisk', label: '🌊 潮汐倒灌預警', color: '#dc2626', state: showTidalRisk, set: (v: boolean) => setShowTidalRisk(v) },
+                    { key: 'waterbank', label: '🏦 水資源銀行', color: '#059669', state: showWaterBank, set: (v: boolean) => { setShowWaterBank(v); if (v && waterBankNodes.length === 0) fetchWaterBankNodes(); } },
+                  ]
+                }
+              ]).map((group) => (
+                <div key={group.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div 
+                    onClick={() => {
+                      setExpandedGroups(prev => prev.includes(group.label) ? prev.filter(g => g !== group.label) : [...prev, group.label])
+                    }}
+                    style={{ 
+                      display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+                      fontSize: '0.85rem', fontWeight: '800', color: 'var(--text-main)',
+                      padding: '4px 8px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.03)',
+                      transition: 'all 0.2s'
+                    }}
+                    className="hover-bg-glass"
+                  >
+                    <span style={{ transform: expandedGroups.includes(group.label) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'inline-block' }}>▶</span>
+                    {group.label}
+                    {group.id === 'prevention' && weatherData && (
+                      <span style={{ 
+                        marginLeft: '8px', fontSize: '0.7rem', padding: '1px 6px', borderRadius: '10px',
+                        backgroundColor: weatherData.overallRisk === '極高' ? '#dc2626' : weatherData.overallRisk === '高' ? '#f97316' : weatherData.overallRisk === '中' ? '#eab308' : '#22c55e',
+                        color: 'white'
+                      }}>
+                        {weatherData.overallRisk}風險
+                      </span>
+                    )}
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '400', marginLeft: 'auto' }}>
+                      ({group.layers.filter(l => l.state).length}/{group.layers.length} 啟動)
+                    </span>
+                  </div>
+
+                  {group.id === 'prevention' && expandedGroups.includes(group.label) && weatherData && weatherData.aiAlerts && (
+                    <div style={{ padding: '4px 8px 8px 20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {weatherData.aiAlerts.map((alert, i) => (
+                        <div 
+                          key={i} 
+                          onClick={() => handleAiAlertClick(alert)}
+                          style={{ 
+                            fontSize: '0.75rem', padding: '6px 10px', borderRadius: '8px', 
+                            backgroundColor: alert.level === 'critical' ? '#fef2f2' : alert.level === 'warning' ? '#fffbeb' : '#f0fdf4',
+                            border: `1px solid ${alert.level === 'critical' ? '#fee2e2' : alert.level === 'warning' ? '#fde68a' : '#dcfce7'}`,
+                            cursor: alert.layerKey ? 'pointer' : 'default'
+                          }}
+                        >
+                          <div style={{ fontWeight: '700', color: alert.level === 'critical' ? '#dc2626' : alert.level === 'warning' ? '#b45309' : '#15803d', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span>{alert.icon}</span> {alert.title}
+                          </div>
+                          <div style={{ color: '#4b5563', marginTop: '2px' }}>{alert.message}</div>
+                          {alert.layerKey && (
+                            <div style={{ fontSize: '0.65rem', color: '#6366f1', marginTop: '4px', fontWeight: 'bold' }}>📍 點擊查看相關圖層</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {expandedGroups.includes(group.label) && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', paddingLeft: '20px', paddingBottom: '4px' }}>
+                      {group.layers.map(({ key, label, color, state, set }) => (
+                        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <button 
+                            className="gis-layer-btn" 
+                            onClick={() => set(!state)} 
+                            style={{
+                              padding: '5px 12px', borderRadius: '18px', border: `2px solid ${color}`,
+                              backgroundColor: state ? color : 'transparent',
+                              color: state ? 'white' : color,
+                              cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600', transition: 'all 0.2s',
+                              display: 'flex', alignItems: 'center', gap: '4px'
+                            }}
+                          >
+                            {state ? <CheckCircle2 size={12} /> : null}
+                            {label}
+                          </button>
+                          
+                          {key === 'tidalrisk' && showTidalRisk && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setShowPredictive(!showPredictive); }}
+                              style={{
+                                padding: '4px 10px', borderRadius: '14px', border: '1px solid #7c3aed',
+                                backgroundColor: showPredictive ? '#7c3aed' : 'transparent',
+                                color: showPredictive ? 'white' : '#7c3aed',
+                                cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600', transition: 'all 0.2s'
+                              }}
+                            >
+                              {showPredictive ? '🔮 預測中' : '🔮 2h 預測'}
+                            </button>
+                          )}
+                          
+                          {key === 'inspection_combined' && state && (
+                            <div style={{ display: 'flex', gap: '4px', backgroundColor: 'rgba(0,0,0,0.05)', padding: '2px 6px', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.1)' }}>
+                              <label style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer', color: showSedimentation && !showPipelineConditions ? '#92400e' : 'inherit' }}>
+                                <input type="checkbox" checked={showSedimentation} onChange={(e) => setShowSedimentation(e.target.checked)} style={{ width: '12px', height: '12px' }} />
+                                僅淤積
+                              </label>
+                            </div>
+                          )}
+
+                          {key === 'floods' && state && (
+                            <div style={{ display: 'flex', gap: '4px', backgroundColor: 'rgba(0,0,0,0.05)', padding: '2px 6px', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.1)' }}>
+                              <label style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer', color: showFloodNews ? '#0891b2' : 'inherit' }}>
+                                <input type="checkbox" checked={showFloodNews} onChange={(e) => {
+                                  setShowFloodNews(e.target.checked);
+                                  if (e.target.checked && !sentimentData) fetchSentiment();
+                                }} style={{ width: '12px', height: '12px' }} />
+                                📰 新聞
+                              </label>
+                              <label style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer', color: showSentiment ? '#ec4899' : 'inherit' }}>
+                                <input type="checkbox" checked={showSentiment} onChange={(e) => {
+                                  setShowSentiment(e.target.checked);
+                                  if (e.target.checked && !sentimentData) fetchSentiment();
+                                }} style={{ width: '12px', height: '12px' }} />
+                                🔥 輿情
+                              </label>
+                            </div>
+                          )}
+
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* 年度清淤 - 分年度篩選 */}
+            {showDredging && systemType === '雨水' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 6px', backgroundColor: 'rgba(22,163,74,0.08)', borderRadius: '12px', border: '1px solid rgba(22,163,74,0.3)' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap' }}>年度：</span>
+                  {['all', '113', '114'].map(yr => (
+                    <button key={yr} onClick={() => { const ny = yr; setDredgingYear(ny); fetchDredgingRoutes(ny); }}
+                      style={{ padding: '2px 8px', borderRadius: '10px', border: '1px solid #16a34a', fontSize: '0.78rem', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s',
+                        backgroundColor: dredgingYear === yr ? '#16a34a' : 'transparent',
+                        color: dredgingYear === yr ? 'white' : '#16a34a' }}>
+                      {yr === 'all' ? '全部' : `${yr}年`}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Status Bar */}
+              <div className="gis-status-bar" style={{ 
+                marginTop: '8px', padding: '10px 14px', borderRadius: '12px', 
+                backgroundColor: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)',
+                display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px',
+                fontSize: '0.82rem'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)' }}>
+                  <CircleDot size={14} /> 
+                  人孔：<span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{mapManholes.length} 點</span>
+                </div>
+
+                {showHouseholds && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#059669' }}>
+                    <Home size={14} /> 
+                    接管戶：
+                    {householdStats ? (
+                      <span style={{ fontWeight: 600 }}>{mapHouseholds.length} / {householdStats.geocoded?.toLocaleString() || 0} 已定位</span>
+                    ) : <span>載入中...</span>}
+                    {isGeocodingHouseholds && <span className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981' }} />}
+                  </div>
+                )}
+
+                {showPipelineConditions && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f97316' }}>
+                    <GitBranch size={14} />
+                    <span>嚴重:{pipelineConditions.filter(c=>c.max_grade===3).length}</span>
+                    <span>中度:{pipelineConditions.filter(c=>c.max_grade===2).length}</span>
+                  </div>
+                )}
+
+                {showTidalRisk && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#dc2626' }}>
+                    <Waves size={14} />
+                    <span>潮汐風險區: {tidalRiskData?.assessments.filter(a => a.riskLevel !== ('低' as any)).length || 0} 處</span>
+                  </div>
+                )}
+
+                {mapLoading && <span style={{ marginLeft: 'auto', color: 'var(--primary)', fontWeight: 600, animation: 'pulse 1.5s infinite' }}>⏳ 數據載入中...</span>}
+              </div>
+            </div>
+
+            {/* 天氣預報 & AI 警示按鈕 */}
+            <div style={{ marginBottom: '12px' }}>
+              <button
+                onClick={() => { setShowWeatherPanel(!showWeatherPanel); if (!weatherData && !weatherLoading) fetchWeather(); }}
+                style={{
+                  padding: '8px 18px', borderRadius: '20px', border: '2px solid #0ea5e9',
+                  background: showWeatherPanel ? '#0ea5e9' : 'transparent',
+                  color: showWeatherPanel ? '#fff' : '#0ea5e9',
+                  fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.2s',
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                }}
+              >
+                🌤️ 天氣預報 &amp; AI 風險警示
+                {weatherData && (
+                  <span style={{
+                    background: weatherData.overallRisk === '極高' ? '#dc2626' : weatherData.overallRisk === '高' ? '#f97316' : weatherData.overallRisk === '中' ? '#eab308' : '#22c55e',
+                    color: '#fff', borderRadius: '10px', padding: '1px 8px', fontSize: '0.78rem',
+                  }}>
+                    {weatherData.overallRisk}風險
+                  </span>
+                )}
+              </button>
+              {weatherLoading && <span style={{ marginLeft: '10px', color: '#6b7280', fontSize: '0.85rem' }}>載入中…</span>}
+              {weatherError && <span style={{ marginLeft: '10px', color: '#dc2626', fontSize: '0.85rem' }}>{weatherError}</span>}
+            </div>
+
+            {/* 天氣預報面板 */}
+            {showWeatherPanel && weatherData && (
+              <div style={{ background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', borderRadius: '14px', padding: '18px', marginBottom: '16px', backdropFilter: 'blur(8px)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#0ea5e9' }}>🌤️ 天氣預報 &amp; AI 風險警示</h3>
+                  <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>更新：{new Date(weatherData.fetchedAt).toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}</span>
+                </div>
+
+                {/* 應變階段指示器 */}
+                {(() => {
+                  const max1hr  = Math.max(0, ...weatherData.rainfallStations.map((s: any) => s.rainfall1hr  ?? 0));
+                  const max3hr  = Math.max(0, ...weatherData.rainfallStations.map((s: any) => s.rainfall3hr  ?? 0));
+                  const max24hr = Math.max(0, ...weatherData.rainfallStations.map((s: any) => s.rainfall24hr ?? 0));
+                  const max10m  = Math.max(0, ...weatherData.rainfallStations.map((s: any) => s.rainfall10min ?? 0));
+
+                  type Phase = { label: string; icon: string; bg: string; color: string; border: string; actions: string[] };
+                  let phase: Phase;
+                  if (weatherData.hasActiveWarning || max1hr >= 80 || max3hr >= 100 || max24hr >= 200) {
+                    phase = { label: '災中搶救　🔴 紅色警戒', icon: '🚨', bg: '#fef2f2', color: '#dc2626', border: '#fca5a5',
+                      actions: ['全員出動，協調消防與警政', '通報縣府緊急應變中心(EOC)', '積水≥30cm 通知警政疏散居民', '嚴禁人員進入人孔（毒氣/水流危險）', '確認新豐/竹北海岸閘門防海水倒灌'] };
+                  } else if (max1hr >= 40) {
+                    phase = { label: '災中搶救　🟠 橙色警戒', icon: '⚠️', bg: '#fff7ed', color: '#ea580c', border: '#fdba74',
+                      actions: ['啟動應變小組', '巡查竹北、新豐、湖口低窪地區', '備妥行動抽水機', '確認排水閘門是否關閉'] };
+                  } else if (max1hr >= 15 || weatherData.overallRisk === '高' || weatherData.overallRisk === '極高') {
+                    phase = { label: '災前預防　🟡 黃色預警', icon: '⚡', bg: '#fefce8', color: '#ca8a04', border: '#fde047',
+                      actions: ['科內待命', '巡查易淹水路段', '備妥砂包及防水閘板', '確認行動抽水機可正常啟動'] };
+                  } else if (max10m >= 5 || weatherData.overallRisk === '中') {
+                    phase = { label: '災前預防　🔵 橙色預警', icon: '🔔', bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe',
+                      actions: ['密切監看雨量變化（每30分鐘）', '確認各排水設施正常運作', '備妥應急物資清單'] };
+                  } else {
+                    phase = { label: '災前預防　🟢 平時巡管', icon: '✅', bg: '#f0fdf4', color: '#16a34a', border: '#86efac',
+                      actions: ['定期清疏管網，4月底前完成汛前清疏', '盤點砂包、防水閘板庫存', '確認管線資料更新情況'] };
+                  }
+
+                  const thresholds = [
+                    { label: '10分鐘', value: max10m,  warn: 5,   unit: 'mm',    hint: '橙色預警' },
+                    { label: '1小時',  value: max1hr,  warn: 40,  unit: 'mm/hr', hint: '緊急應變' },
+                    { label: '3小時',  value: max3hr,  warn: 100, unit: 'mm',    hint: '請求消防' },
+                    { label: '24小時', value: max24hr, warn: 200, unit: 'mm',    hint: '啟動EOC' },
+                  ];
+
+                  return (
+                    <>
+                      {/* Phase banner */}
+                      <div style={{ background: phase.bg, border: `2px solid ${phase.border}`, borderRadius: '12px', padding: '12px 16px', marginBottom: '12px', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                        <div style={{ fontSize: '2rem', lineHeight: 1, marginTop: '2px' }}>{phase.icon}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: phase.color, marginBottom: '8px' }}>{phase.label}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                            {phase.actions.map((a, ai) => (
+                              <span key={ai} style={{ background: '#fff', border: `1px solid ${phase.border}`, borderRadius: '6px', padding: '2px 8px', fontSize: '0.77rem', color: phase.color, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                ▶ {a}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Rainfall threshold status bars */}
+                      {weatherData.rainfallStations.length > 0 && (
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px' }}>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>📊 雨量門檻狀態（最大站值）</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                            {thresholds.map((t, ti) => {
+                              const ratio = t.warn > 0 ? Math.min(t.value / t.warn, 1) : 0;
+                              const barColor = t.value >= t.warn ? '#dc2626' : t.value >= t.warn * 0.7 ? '#f97316' : t.value >= t.warn * 0.3 ? '#eab308' : '#22c55e';
+                              const exceeded = t.value >= t.warn;
+                              return (
+                                <div key={ti} style={{ textAlign: 'center', background: '#fff', borderRadius: '8px', padding: '8px 6px', border: `1px solid ${exceeded ? '#fca5a5' : '#e2e8f0'}` }}>
+                                  <div style={{ fontSize: '0.74rem', color: '#6b7280', marginBottom: '3px' }}>{t.label}</div>
+                                  <div style={{ fontWeight: 700, fontSize: '1.05rem', color: barColor, lineHeight: 1.1 }}>
+                                    {t.value > 0 ? t.value.toFixed(1) : '—'}
+                                  </div>
+                                  <div style={{ fontSize: '0.68rem', color: '#9ca3af' }}>{t.unit}</div>
+                                  <div style={{ margin: '5px 0 3px', height: '5px', background: '#e5e7eb', borderRadius: '3px', overflow: 'hidden' }}>
+                                    <div style={{ width: `${ratio * 100}%`, height: '100%', background: barColor, borderRadius: '3px', transition: 'width 0.5s' }} />
+                                  </div>
+                                  <div style={{ fontSize: '0.67rem', color: exceeded ? '#dc2626' : '#9ca3af', fontWeight: exceeded ? 700 : 400 }}>
+                                    {exceeded ? `⚡ 超過門檻` : `門檻 ${t.warn}${t.unit}`}
+                                  </div>
+                                  {exceeded && <div style={{ fontSize: '0.66rem', color: '#dc2626', marginTop: '1px' }}>{t.hint}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {/* AI 警示 */}
+                <div style={{ marginBottom: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {weatherData.aiAlerts.map((alert, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => handleAiAlertClick(alert)}
+                      style={{
+                        borderRadius: '10px', padding: '10px 14px',
+                        background: alert.level === 'critical' ? '#fef2f2' : alert.level === 'warning' ? '#fffbeb' : alert.level === 'info' ? '#eff6ff' : '#f0fdf4',
+                        borderLeft: `4px solid ${alert.level === 'critical' ? '#dc2626' : alert.level === 'warning' ? '#f59e0b' : alert.level === 'info' ? '#3b82f6' : '#22c55e'}`,
+                        cursor: alert.layerKey ? 'pointer' : 'default',
+                        transition: 'transform 0.2s',
+                      }}
+                      onMouseEnter={(e) => alert.layerKey && (e.currentTarget.style.transform = 'translateX(4px)')}
+                      onMouseLeave={(e) => alert.layerKey && (e.currentTarget.style.transform = 'translateX(0)')}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {alert.icon} {alert.title}
+                        {alert.layerKey && <span style={{ fontSize: '0.65rem', color: '#6366f1', marginLeft: 'auto', background: '#e0e7ff', padding: '1px 6px', borderRadius: '4px' }}>📍 定位</span>}
+                      </div>
+                      <div style={{ fontSize: '0.83rem', color: '#374151', marginBottom: '4px' }}>{alert.message}</div>
+                      <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>📌 建議：{alert.action}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 鄉鎮預報 */}
+                {weatherData.forecasts.length > 0 && (
+                  <div style={{ marginBottom: '12px' }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>📡 鄉鎮天氣預報</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px' }}>
+                      {weatherData.forecasts.map((f, i) => (
+                        <div key={i} style={{
+                          background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px',
+                          padding: '8px 12px', minWidth: '100px', textAlign: 'center',
+                        }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#1e40af', marginBottom: '4px' }}>{f.area}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#374151' }}>{f.weatherDesc}</div>
+                          <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '2px' }}>
+                            降雨機率：{f.pop6h !== null ? `${f.pop6h}%` : f.pop12h !== null ? `${f.pop12h}%` : '—'}
+                          </div>
+                          <div style={{
+                            marginTop: '4px', display: 'inline-block', padding: '1px 8px', borderRadius: '8px', fontSize: '0.75rem',
+                            background: f.riskLevel === '高' || f.riskLevel === '極高' ? '#fee2e2' : f.riskLevel === '中' ? '#fef3c7' : '#dcfce7',
+                            color: f.riskLevel === '高' || f.riskLevel === '極高' ? '#dc2626' : f.riskLevel === '中' ? '#92400e' : '#166534',
+                          }}>
+                            {f.riskLevel}風險
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 即時雨量站（可收合） */}
+                {weatherData.rainfallStations.length > 0 && (
+                  <div style={{ marginBottom: '4px' }}>
+                    <button
+                      onClick={() => setShowRainfallStations(v => !v)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px', width: '100%',
+                        background: 'transparent', border: '1px solid #e2e8f0', borderRadius: '8px',
+                        padding: '6px 12px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                        color: '#374151', textAlign: 'left', marginBottom: showRainfallStations ? '8px' : '0',
+                      }}
+                    >
+                      🌧️ 即時雨量站（{weatherData.rainfallStations.length} 站）
+                      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#9ca3af' }}>
+                        {showRainfallStations ? '▲ 收合' : '▼ 展開'}
+                      </span>
+                    </button>
+                    {showRainfallStations && (
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {weatherData.rainfallStations.map((s, i) => {
+                          const isExtreme = (s.rainfall1hr || 0) >= 40;
+                          const isHigh = (s.rainfall1hr || 0) >= 15;
+                          return (
+                            <div key={i} style={{
+                              background: isExtreme ? '#fef2f2' : isHigh ? '#fffbeb' : '#f0f9ff',
+                              border: `1px solid ${isExtreme ? '#fca5a5' : isHigh ? '#fcd34d' : '#bae6fd'}`,
+                              borderRadius: '8px', padding: '6px 10px', fontSize: '0.78rem',
+                              animation: isExtreme ? 'pulse 2s infinite' : 'none'
+                            }}>
+                              <div style={{ fontWeight: 600, color: isExtreme ? '#dc2626' : isHigh ? '#92400e' : '#0369a1', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {s.stationName} {isExtreme && '🚨'} {isHigh && !isExtreme && '⚠️'}
+                              </div>
+                              <div style={{ color: isExtreme ? '#b91c1c' : '#374151' }}>1hr：{s.rainfall1hr !== null ? `${s.rainfall1hr} mm` : '—'}</div>
+                              <div style={{ color: isExtreme ? '#b91c1c' : '#374151' }}>3hr：{s.rainfall3hr !== null ? `${s.rainfall3hr} mm` : '—'}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button onClick={fetchWeather} style={{ marginTop: '12px', padding: '5px 14px', borderRadius: '8px', background: '#0ea5e9', color: '#fff', border: 'none', fontSize: '0.82rem', cursor: 'pointer' }}>
+                  🔄 重新整理
+                </button>
+              </div>
+            )}
+
+            <div className="gis-map-container" style={{ position: 'relative', height: '700px', width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--glass-border)', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}>
+
+              {/* GPS Button (floating on map) */}
+              <button
+                onClick={handleGPS}
+                title="取得我的位置"
+                style={{
+                  position: 'absolute', bottom: '80px', right: '10px', zIndex: 1000,
+                  width: '44px', height: '44px', borderRadius: '8px',
+                  backgroundColor: gpsLocation ? '#10b981' : 'white',
+                  border: '2px solid rgba(0,0,0,0.2)',
+                  color: gpsLocation ? 'white' : '#374151',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '1.2rem', boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {gpsLoading ? '⏳' : '📍'}
+              </button>
+
+              {/* Sidebar Overlay */}
+              {showComplaintsSidebar && (
+                <div className="gis-sidebar" style={{ position: 'absolute', top: 0, right: 0, width: '420px', height: '100%', backgroundColor: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(10px)', zIndex: 1000, borderLeft: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 15px rgba(0,0,0,0.1)' }}>
+                  {/* 標題 */}
+                  <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <MessageSquareWarning size={20} /> 塞管通報管理
+                    </h3>
+                    <button onClick={() => setShowComplaintsSidebar(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                      <X size={24} />
+                    </button>
+                  </div>
+
+                  {/* 分頁標籤 */}
+                  <div style={{ display: 'flex', borderBottom: '2px solid var(--glass-border)', flexShrink: 0 }}>
+                    <button onClick={() => setComplaintTab('current')} style={{ flex: 1, padding: '10px', fontSize: '0.9rem', border: 'none', borderBottom: complaintTab === 'current' ? '2px solid var(--danger)' : '2px solid transparent', marginBottom: '-2px', backgroundColor: 'transparent', color: complaintTab === 'current' ? 'var(--danger)' : 'var(--text-muted)', fontWeight: complaintTab === 'current' ? 'bold' : 'normal', cursor: 'pointer' }}>
+                      📋 即時通報 ({complaints.length})
+                    </button>
+                    <button onClick={() => { setComplaintTab('history'); if (pipeReports.length === 0) fetchPipeReports('all'); }} style={{ flex: 1, padding: '10px', fontSize: '0.9rem', border: 'none', borderBottom: complaintTab === 'history' ? '2px solid #b91c1c' : '2px solid transparent', marginBottom: '-2px', backgroundColor: 'transparent', color: complaintTab === 'history' ? '#b91c1c' : 'var(--text-muted)', fontWeight: complaintTab === 'history' ? 'bold' : 'normal', cursor: 'pointer' }}>
+                      📂 歷史紀錄 ({pipeReports.length > 0 ? pipeReports.length : '1,727'})
+                    </button>
+                  </div>
+
+                  {/* 即時通報頁 */}
+                  {complaintTab === 'current' && (
+                    <>
+                      <div style={{ padding: '12px 16px', flexShrink: 0 }}>
+                        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                          {['全部', '待處理', '已解決'].map(s => (
+                            <button key={s} onClick={() => setFilterStatus(s)} style={{ flex: 1, padding: '5px', fontSize: '0.82rem', borderRadius: '6px', border: '1px solid var(--glass-border)', backgroundColor: filterStatus === s ? 'var(--danger)' : 'white', color: filterStatus === s ? 'white' : 'var(--text-main)', cursor: 'pointer' }}>{s}</button>
+                          ))}
+                        </div>
+                        <div style={{ position: 'relative' }}>
+                          <Search size={15} style={{ position: 'absolute', left: '10px', top: '9px', color: 'var(--text-muted)' }} />
+                          <input type="text" placeholder="搜尋地址或通報人..." value={compSearchTerm} onChange={e => setCompSearchTerm(e.target.value)}
+                            style={{ width: '100%', padding: '7px 8px 7px 32px', borderRadius: '6px', border: '1px solid var(--glass-border)', fontSize: '0.88rem' }} />
+                        </div>
+                      </div>
+                      <div style={{ flexGrow: 1, overflowY: 'auto', padding: '0 16px 16px' }}>
+                        {filteredComplaintsList.map(comp => (
+                          <div key={comp.id} style={{ padding: '12px', border: '1px solid var(--glass-border)', borderRadius: '8px', marginBottom: '10px', backgroundColor: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(comp.reported_at).toLocaleDateString()}</span>
+                              <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: comp.status === 'pending' ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)', color: comp.status === 'pending' ? 'var(--danger)' : 'var(--success)', fontWeight: 'bold' }}>
+                                {comp.status === 'pending' ? '待處理' : '已解決'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.93rem', fontWeight: 'bold', marginBottom: '3px' }}>{comp.address}</div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '8px' }}>通報人: {comp.reporter_name}</div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              {comp.lat && comp.lng && (
+                                <button onClick={() => setMapCenter([comp.lat!, comp.lng!])} style={{ flex: 1, padding: '5px', fontSize: '0.78rem', borderRadius: '4px', border: '1px solid var(--glass-border)', backgroundColor: 'rgba(59,130,246,0.05)', color: '#3b82f6', cursor: 'pointer' }}>📍 定位</button>
+                              )}
+                              <button 
+                                onClick={() => handleExportEmic(comp)} 
+                                title="匯出 EMIC 案件格式"
+                                style={{ padding: '5px 8px', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid #dc2626', backgroundColor: 'rgba(220,38,38,0.05)', color: '#dc2626', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                <ShieldAlert size={14} /> EMIC
+                              </button>
+                              <button onClick={() => startCompEditing(comp)} style={{ flex: 1, padding: '5px', fontSize: '0.78rem', borderRadius: '4px', border: '1px solid var(--glass-border)', backgroundColor: 'transparent', cursor: 'pointer' }}>編輯</button>
+                              <button onClick={() => handleCompDelete(comp.id)} style={{ padding: '5px', color: 'var(--danger)', border: 'none', background: 'transparent' }}><Trash2 size={16} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* 歷史紀錄頁 */}
+                  {complaintTab === 'history' && (
+                    <>
+                      <div style={{ padding: '12px 16px', flexShrink: 0 }}>
+                        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                          {[['all','全部'], ['塞管','塞管'], ['冒水','冒水'], ['聲響','聲響'], ['堵塞','堵塞'], ['積水','積水'], ['人孔','人孔']].map(([val, label]) => (
+                            <button key={val} onClick={() => { setPipeReportFilter(val); fetchPipeReports(val); }} style={{ padding: '4px 10px', fontSize: '0.8rem', borderRadius: '12px', border: `1px solid ${pipeReportFilter === val ? '#dc2626' : 'var(--glass-border)'}`, backgroundColor: pipeReportFilter === val ? '#dc2626' : 'white', color: pipeReportFilter === val ? 'white' : 'var(--text-main)', cursor: 'pointer' }}>{label}</button>
+                          ))}
+                        </div>
+                        <div style={{ position: 'relative' }}>
+                          <Search size={15} style={{ position: 'absolute', left: '10px', top: '9px', color: 'var(--text-muted)' }} />
+                          <input type="text" placeholder="搜尋地址或問題類型..." value={historySearch} onChange={e => setHistorySearch(e.target.value)}
+                            style={{ width: '100%', padding: '7px 8px 7px 32px', borderRadius: '6px', border: '1px solid var(--glass-border)', fontSize: '0.88rem' }} />
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                          共 {pipeReports.filter(r => !historySearch || r.address.includes(historySearch) || r.issue_type.includes(historySearch)).length} 筆（110-115年開口契約）
+                        </div>
+                      </div>
+                      <div style={{ flexGrow: 1, overflowY: 'auto', padding: '0 16px 16px' }}>
+                        {pipeReports
+                          .filter(r => !historySearch || r.address.includes(historySearch) || r.issue_type.includes(historySearch))
+                          .map(rpt => (
+                          <div key={rpt.id} style={{ padding: '10px 12px', border: '1px solid var(--glass-border)', borderRadius: '8px', marginBottom: '8px', backgroundColor: 'white' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{rpt.report_date || '日期不詳'}</span>
+                              <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'rgba(220,38,38,0.1)', color: '#dc2626', fontWeight: 'bold' }}>
+                                {rpt.issue_type}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.88rem', fontWeight: 'bold', marginBottom: '3px' }}>{rpt.address}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#374151', marginBottom: '6px' }}>✅ {rpt.resolution || '未記錄'}</div>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              {rpt.lat && rpt.lng && (
+                                <button onClick={() => setMapCenter([rpt.lat, rpt.lng])} style={{ padding: '4px 8px', fontSize: '0.77rem', borderRadius: '4px', border: '1px solid var(--glass-border)', backgroundColor: 'rgba(59,130,246,0.05)', color: '#3b82f6', cursor: 'pointer' }}>📍 定位</button>
+                              )}
+                              <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '8px', backgroundColor: 'rgba(107,114,128,0.1)', color: '#6b7280' }}>{rpt.sheet || `${rpt.year}年`}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Form Overlay Modal */}
+              {isFormOpen && (
+                <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                  <form onSubmit={handleCompSubmit} className="glass-panel" style={{ width: '100%', maxWidth: '500px', padding: '24px', position: 'relative' }}>
+                    <button type="button" onClick={() => { setIsFormOpen(false); setFormConnectionResult(null); }} style={{ position: 'absolute', right: '16px', top: '16px', border: 'none', background: 'transparent', cursor: 'pointer' }}><X size={24} /></button>
+                    <h2 style={{ fontSize: '1.25rem', marginBottom: '20px', color: editingId ? 'var(--primary)' : 'var(--danger)' }}>{editingId ? '編輯陳情紀錄' : '新增塞管通報'}</h2>
+                    
+                    {!editingId ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.9rem' }}>通報人姓名 *</label>
+                          <input required name="reporter_name" value={formData.reporter_name} onChange={handleCompInputChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--glass-border)' }} />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.9rem' }}>發生地址 *</label>
+                          <input
+                            required name="address" value={formData.address}
+                            onChange={(e) => {
+                              handleCompInputChange(e);
+                              // Debounce connection check
+                              const val = e.target.value;
+                              clearTimeout((window as any)._connCheckTimer);
+                              (window as any)._connCheckTimer = setTimeout(() => checkFormConnection(val), 600);
+                            }}
+                            placeholder="輸入地址後自動查詢接管狀態"
+                            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${formConnectionResult ? (formConnectionResult.connected ? '#10b981' : '#ef4444') : 'var(--glass-border)'}` }}
+                          />
+                          {/* Connection status badge */}
+                          {(isCheckingFormConnection || formConnectionResult) && (
+                            <div style={{ marginTop: '6px', padding: '8px 12px', borderRadius: '6px', fontSize: '0.83rem', backgroundColor: isCheckingFormConnection ? '#f9fafb' : formConnectionResult?.connected ? '#f0fdf4' : '#fff1f2', border: `1px solid ${isCheckingFormConnection ? '#d1d5db' : formConnectionResult?.connected ? '#6ee7b7' : '#fca5a5'}`, display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                              {isCheckingFormConnection ? (
+                                <><div style={{ width: '12px', height: '12px', border: '2px solid #d1d5db', borderTopColor: '#8b5cf6', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginTop: '1px', flexShrink: 0 }} /><span style={{ color: '#6b7280' }}>查詢接管資料中...</span></>
+                              ) : formConnectionResult?.connected ? (
+                                <div style={{ width: '100%' }}>
+                                  <div style={{ fontWeight: 600, color: '#065f46', marginBottom: '4px' }}>✅ 已接管 — 找到 {formConnectionResult.count} 筆</div>
+                                  <div style={{ maxHeight: '100px', overflowY: 'auto' }}>
+                                    {formConnectionResult.records.slice(0, 5).map((r: any, i: number) => (
+                                      <div key={i} style={{ color: '#374151', borderBottom: i < formConnectionResult.records.length - 1 ? '1px solid #d1fae5' : 'none', padding: '2px 0' }}>
+                                        💧 <span style={{ fontFamily: 'monospace', color: '#059669' }}>{r.water_no}</span> — {r.usage_addr}
+                                      </div>
+                                    ))}
+                                    {formConnectionResult.total > 5 && <div style={{ color: '#6b7280', fontStyle: 'italic', marginTop: '2px' }}>（還有 {formConnectionResult.total - 5} 筆...）</div>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <><span style={{ color: '#991b1b', fontWeight: 600 }}>❌ 查無接管記錄</span><span style={{ color: '#6b7280' }}> — 此地址可能尚未接管</span></>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.9rem' }}>狀況描述</label>
+                          <textarea name="description" value={formData.description} onChange={handleCompInputChange} rows={3} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--glass-border)' }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.9rem' }}>處理狀態</label>
+                          <select name="status" value={editData.status} onChange={handleCompInputChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                            <option value="pending">待處理</option>
+                            <option value="processing">處理中</option>
+                            <option value="resolved">已解決</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.9rem' }}>處理紀錄</label>
+                          <textarea name="resolution_notes" value={editData.resolution_notes} onChange={handleCompInputChange} rows={3} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--glass-border)' }} />
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+                      <button type="button" onClick={() => setIsFormOpen(false)} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'transparent' }}>取消</button>
+                      <button type="submit" disabled={submitting} className="btn-primary" style={{ backgroundColor: editingId ? 'var(--primary)' : 'var(--danger)' }}>
+                        {submitting ? '儲存中...' : '確認儲存'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+              <MapContainer
+                center={mapCenter}
+                zoom={14}
+                style={{ height: '100%', width: '100%' }}
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                <MapBoundsHandler onBoundsChange={(b) => { fetchMapData(b); if (showHouseholds) fetchHouseholds(b); if (showPipelineConditions) fetchPipelineConditions(b); }} />
+<MapFlyTo center={mapCenter} />
+
+                {/* Pipeline Polylines */}
+                {showPipelines && mapPipelines.map((pipe: MapPipeline) => (
+                  <Polyline
+                    key={pipe.id}
+                    positions={pipe.coords}
+                    eventHandlers={{
+                      click: (e: any) => {
+                        
+                        setSelectedAsset({ type: 'pipeline', data: pipe });
+                      }
+                    }}
+                    pathOptions={{
+                      color: systemType === '污水' ? '#3b82f6' : '#0ea5e9',
+                      weight: 4,
+                      opacity: selectedAsset?.data?.id === pipe.id ? 1 : 0.75,
+                    }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '190px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#3b82f6', fontSize: '1rem' }}>{pipe.sewer_no || '管線'}</strong><br />
+                        🏗️ {pipe.project_name || '—'}<br />
+                        📏 管徑：{pipe.diameter ? `${pipe.diameter} mm` : '—'}<br />
+                        🛣️ 材質：{materialLabel(pipe.material)}
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(pipe.coords[0][0], pipe.coords[0][1])} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </Polyline>
+                ))}
+
+                {/* Catch Basin Markers */}
+                {showCatchBasins && mapManholes
+                  .filter((mh: MapManhole) => mh.manhole_type === '集水井')
+                  .map((mh: MapManhole) => (
+                  <CircleMarker
+                    key={`cb-${mh.id}`}
+                    center={[mh.lat, mh.lng]}
+                    radius={4}
+                    pathOptions={{ color: '#d97706', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 1.5 }}
+                    eventHandlers={{ click: () => openStreetView(mh.lat, mh.lng) }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '170px', lineHeight: '1.6' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <strong style={{ color: '#d97706' }}>🟡 集水井 {mh.manhole_no}</strong>
+                        </div>
+                        📏 深度：{mh.depth ? `${mh.depth} m` : '—'}<br />
+                        🔄 系統：{mh.system_type || '—'}
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(mh.lat, mh.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* Manhole Markers */}
+                {showManholes && mapManholes
+                  .filter((mh: MapManhole) => mh.manhole_type !== '集水井')
+                  .map((mh: MapManhole) => (
+                  <CircleMarker
+                    key={`mh-${mh.id ?? mh.manhole_no}`}
+                    center={[mh.lat, mh.lng]}
+                    radius={selectedAsset?.data?.id === mh.id ? 8 : 6}
+                    eventHandlers={{
+                      click: (e: any) => {
+                        
+                        setSelectedAsset({ type: 'manhole', data: mh });
+                        openStreetView(mh.lat, mh.lng);
+                        if (systemType === '污水') fetchNearbyReports(mh.id, mh.lat, mh.lng);
+                      }
+                    }}
+                    pathOptions={{
+                      color: mh.system_type === '污水' ? '#8b5cf6' : '#0ea5e9',
+                      fillColor: manholeNearbyReports[mh.id]?.length > 0 ? '#ef4444' : (mh.system_type === '污水' ? '#a78bfa' : '#38bdf8'),
+                      fillOpacity: 0.85,
+                      weight: selectedAsset?.data?.id === mh.id ? 3 : 1.5
+                    }}
+                  >
+                    <Popup maxWidth={280}>
+                      <div style={{ minWidth: '240px', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                        <strong style={{ color: mh.system_type === '污水' ? '#8b5cf6' : '#0ea5e9', fontSize: '1rem' }}>
+                          {mh.manhole_no}
+                        </strong><br />
+                        📍 {mh.location || '—'}<br />
+                        🏗️ {mh.project_name || '—'}<br />
+                        📏 深度：{mh.depth ? `${mh.depth} m` : '—'}<br />
+                        🏷️ 型式：{mh.manhole_type || '—'}
+
+                        {/* 污水系統：顯示附近塞管通報 */}
+                        {systemType === '污水' && (
+                          <div style={{ marginTop: '8px', borderTop: '1px solid #e5e7eb', paddingTop: '8px' }}>
+                            <strong style={{ fontSize: '0.85rem', color: '#991b1b' }}>
+                              🚨 附近塞管通報
+                              {manholeNearbyReports[mh.id] ? `（${manholeNearbyReports[mh.id].length} 筆）` : ''}
+                            </strong>
+                            {!manholeNearbyReports[mh.id] && (
+                              <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>載入中...</div>
+                            )}
+                            {manholeNearbyReports[mh.id]?.length === 0 && (
+                              <div style={{ fontSize: '0.78rem', color: '#9ca3af' }}>附近無通報紀錄</div>
+                            )}
+                            {manholeNearbyReports[mh.id]?.slice(0, 5).map(rpt => (
+                              <div key={rpt.id} style={{ fontSize: '0.78rem', backgroundColor: '#fef2f2', borderRadius: '4px', padding: '4px 6px', marginTop: '4px', borderLeft: '3px solid #ef4444' }}>
+                                <span style={{ color: '#dc2626', fontWeight: 'bold' }}>{rpt.issue_type}</span>
+                                <span style={{ color: '#6b7280', marginLeft: '4px' }}>{rpt.report_date}</span><br />
+                                <span style={{ color: '#374151' }}>{rpt.address.slice(0, 30)}{rpt.address.length > 30 ? '...' : ''}</span>
+                              </div>
+                            ))}
+                            {(manholeNearbyReports[mh.id]?.length || 0) > 5 && (
+                              <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '4px' }}>
+                                另有 {manholeNearbyReports[mh.id].length - 5} 筆，請至側邊欄查看完整紀錄
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(mh.lat, mh.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* Household Connection Markers */}
+                {showHouseholds && mapHouseholds.map((hh: any) => (
+                  <CircleMarker
+                    key={`hh-${hh.id}`}
+                    center={[hh.lat, hh.lng]}
+                    radius={4}
+                    pathOptions={{ color: '#059669', fillColor: '#10b981', fillOpacity: 0.75, weight: 1 }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '190px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#059669', fontSize: '0.95rem' }}>🏠 接管戶</strong><br />
+                        💧 水號：{hh.water_no || '—'}<br />
+                        📍 {hh.usage_addr || '—'}<br />
+                        🏷️ 來源：{hh.source || '—'}
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(hh.lat, hh.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* 淤積管段圖層 — 從縱走資料中篩選有淤積的管段 */}
+                {showSedimentation && conditionLines
+                  .filter((cond: ConditionLine) => cond.has_sedimentation)
+                  .map((cond: ConditionLine) => {
+                    const sedIssues = cond.issues.filter(i => i.type === '淤積');
+                    const sedGrade = Math.max(...sedIssues.map(i => i.grade ?? 1));
+                    const sedColor = sedGrade >= 2 ? '#92400e' : '#d97706';
+                    const sedWeight = sedGrade >= 2 ? 7 : 5;
+                    return (
+                      <Polyline
+                        key={`sed-${cond.id}`}
+                        positions={cond.coords}
+                        pathOptions={{ color: sedColor, weight: sedWeight, opacity: 0.95, dashArray: '8,4' }}
+                      >
+                        <Popup>
+                          <div style={{ minWidth: '210px', lineHeight: '1.8' }}>
+                            <strong style={{ color: sedColor, fontSize: '1rem' }}>🟫 淤積管段</strong><br />
+                            <span style={{ fontSize: '0.85rem', color: '#666' }}>{cond.p_no}</span><br />
+                            🏙️ 鄉鎮：{cond.town}<br />
+                            📊 淤積等級：<strong style={{ color: sedColor }}>{sedGrade === 2 ? '中度' : '輕微'}</strong><br />
+                            {sedIssues.map((i, idx) => i.desc && (
+                              <span key={idx} style={{ fontSize: '0.82rem', color: '#6b7280' }}>📝 {i.desc}<br /></span>
+                            ))}
+                            📋 管段整體缺失：{cond.issue_count} 筆
+                            {cond.has_damage && <><br /><span style={{ color: '#dc2626', fontSize: '0.82rem' }}>⚠️ 同時有破損</span></>}
+                          </div>
+                        </Popup>
+                      </Polyline>
+                    );
+                  })
+                }
+
+                {/* Pipeline Condition Layer (縱走管況) — 獨立圖層，不依賴管線路徑 */}
+                {showPipelineConditions && conditionLines.map((cond: ConditionLine) => {
+                  const gradeColor = cond.max_grade === 3 ? '#dc2626' : cond.max_grade === 2 ? '#f97316' : cond.max_grade === 1 ? '#eab308' : '#9ca3af';
+                  const gradeLabel = cond.max_grade === 3 ? '嚴重' : cond.max_grade === 2 ? '中度' : cond.max_grade === 1 ? '輕微' : '無等級';
+                  return (
+                    <Polyline
+                      key={`cond-${cond.id}`}
+                      positions={cond.coords}
+                      pathOptions={{ color: gradeColor, weight: 5, opacity: 0.9 }}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '200px', lineHeight: '1.8' }}>
+                          <strong style={{ color: gradeColor, fontSize: '1rem' }}>🔍 縱走管況：{gradeLabel}</strong><br />
+                          <span style={{ fontSize: '0.85rem', color: '#666' }}>{cond.p_no}</span><br />
+                          🏙️ 鄉鎮：{cond.town}<br />
+                          📋 缺失總數：{cond.issue_count} 筆<br />
+                          {cond.has_damage && <span style={{ color: '#dc2626' }}>⚠️ 破損&nbsp;</span>}
+                          {cond.has_sedimentation && <span style={{ color: '#b45309' }}>🟫 淤積&nbsp;</span>}
+                          {cond.has_crossing && <span style={{ color: '#7c3aed' }}>❌ 橫越管&nbsp;</span>}
+                          {cond.has_cable && <span style={{ color: '#0369a1' }}>🔌 纜線附掛&nbsp;</span>}
+                          {cond.cannot_survey && <span style={{ color: '#9ca3af' }}>🚫 無法縱走&nbsp;</span>}
+                        </div>
+                      </Popup>
+                    </Polyline>
+                  );
+                })}
+
+                {/* Flood Hotspot Markers (淹水熱區) */}
+                {showFloodHotspots && floodHotspots.map((hs) => {
+                  const radius = Math.min(8 + hs.event_count * 4, 28);
+                  const opacity = Math.min(0.45 + hs.event_count * 0.08, 0.75);
+                  return (
+                    <CircleMarker
+                      key={`flood-${hs.id}`}
+                      center={[hs.lat, hs.lng]}
+                      radius={radius}
+                      pathOptions={{ color: '#0369a1', fillColor: '#38bdf8', fillOpacity: opacity, weight: 2, dashArray: '4,3' }}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '210px', lineHeight: '1.8' }}>
+                          <strong style={{ color: '#0369a1', fontSize: '1rem' }}>🌊 {hs.location}</strong><br />
+                          🏙️ {hs.town}<br />
+                          📅 年份：{hs.years}<br />
+                          🔢 事件次數：<strong style={{ color: '#dc2626' }}>{hs.event_count}</strong> 次<br />
+                          📝 {hs.description}<br />
+                          <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>來源：{hs.source}</span>
+                          <div style={{ marginTop: '8px' }}>
+                            <button onClick={() => openStreetView(hs.lat, hs.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                              📷 Google 街景
+                            </button>
+                          </div>
+                        </div>
+                      </Popup>
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 都市計畫區範圍（永久顯示，資料來源：全國土地使用分區查詢系統） */}
+                {urbanPlanZones.flatMap((zone) => {
+                  // Normalise both Polygon and MultiPolygon to a list of rings
+                  // Polygon: coordinates = [ring]
+                  // MultiPolygon: coordinates = [[ring], [ring], ...]
+                  const geometry = zone.geometry as { type: string; coordinates: unknown };
+                  const isMulti = geometry.type === 'MultiPolygon';
+                  const rings: number[][][] = isMulti
+                    ? (geometry.coordinates as number[][][][]).map(poly => poly[0])
+                    : [(geometry.coordinates as number[][][])[0]];
+                  const pathOptions = {
+                    color: '#7c3aed', weight: 2, fill: true,
+                    fillColor: '#7c3aed', fillOpacity: 0.04,
+                    opacity: 0.75, dashArray: '6,3',
+                  };
+                  return rings.map((ring, ri) => {
+                    const positions = ring.map(
+                      ([lng, lat]: number[]) => [lat, lng] as [number, number]
+                    );
+                    return (
+                      <Polygon
+                        key={`${zone.properties.code}-${ri}`}
+                        positions={positions}
+                        pathOptions={pathOptions}
+                      >
+                        <Tooltip sticky>
+                          <span style={{ fontWeight: '600', color: '#7c3aed' }}>🏙️ {zone.properties.name}</span>
+                        </Tooltip>
+                      </Polygon>
+                    );
+                  });
+                })}
+
+                {/* Dredging Route Polylines (年度清淤，僅雨水系統) */}
+                {showDredging && systemType === '雨水' && dredgingRoutes.map((dr) => {
+                  const popup = (
+                    <Popup>
+                      <div style={{ minWidth: '240px', lineHeight: '1.7' }}>
+                        <strong style={{ color: '#15803d', fontSize: '1rem' }}>🚿 {dr.road_name}</strong><br />
+                        📅 施作日期：{dr.work_date}<br />
+                        📏 總清淤長度：<strong>{dr.total_length.toLocaleString()} m</strong><br />
+                        🏗️ 箱涵種類：{dr.culvert_types}<br />
+                        {dr.manhole_count > 0 && <>👁️ 人孔清淤：{dr.manhole_count} 座<br /></>}
+                        {dr.cistern_count > 0 && <>🪣 集水井：{dr.cistern_count} 座<br /></>}
+                        {dr.details && dr.details.length > 1 && (
+                          <div style={{ marginTop: '6px', fontSize: '0.8rem', color: '#374151' }}>
+                            {dr.details.map((d, i) => (
+                              <div key={i}>• {d.culvert_type}：{d.length_m} m</div>
+                            ))}
+                          </div>
+                        )}
+                        <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{dr.year}年度開口契約</span>
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(dr.lat, dr.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  );
+                  if (dr.polyline && dr.polyline.length >= 2) {
+                    return (
+                      <Polyline
+                        key={`dr-${dr.id}`}
+                        positions={dr.polyline as [number, number][]}
+                        pathOptions={{ color: '#15803d', weight: 6, opacity: 0.85 }}
+                      >
+                        {popup}
+                      </Polyline>
+                    );
+                  }
+                  // Fallback: single point marker
+                  return (
+                    <CircleMarker
+                      key={`dr-${dr.id}`}
+                      center={[dr.lat, dr.lng]}
+                      radius={10}
+                      pathOptions={{ color: '#15803d', fillColor: '#22c55e', fillOpacity: 0.85, weight: 2 }}
+                    >
+                      {popup}
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* Pipe Report Markers (歷史塞管通報，僅污水系統) */}
+                {showHistoryReports && systemType === '污水' && pipeReports.map((rpt) => (
+                  <CircleMarker
+                    key={`rpt-${rpt.id}`}
+                    center={[rpt.lat, rpt.lng]}
+                    radius={7}
+                    pathOptions={{ color: '#991b1b', fillColor: '#ef4444', fillOpacity: 0.75, weight: 1.5 }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: '220px', lineHeight: '1.8' }}>
+                        <strong style={{ color: '#991b1b', fontSize: '1rem' }}>🚨 {rpt.issue_type}</strong><br />
+                        📍 {rpt.address}<br />
+                        📅 通報日期：{rpt.report_date || '不詳'}<br />
+                        ✅ 處理結果：{rpt.resolution || '未記錄'}<br />
+                        <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>來源：{rpt.sheet || `${rpt.year}年開口契約`}</span>
+                        <div style={{ marginTop: '8px' }}>
+                          <button onClick={() => openStreetView(rpt.lat, rpt.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                            📷 Google 街景
+                          </button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* Complaint Markers */}
+                {showComplaints && complaints.map(comp => (
+                  (comp.lat && comp.lng) ? (
+                    <CircleMarker
+                      key={`comp-${comp.id}`}
+                      center={[comp.lat, comp.lng]}
+                      radius={8}
+                      pathOptions={{
+                        color: comp.status === 'resolved' ? '#10b981' : '#ef4444',
+                        fillColor: comp.status === 'resolved' ? '#10b981' : '#ef4444',
+                        fillOpacity: 0.7, weight: 2
+                      }}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '180px', lineHeight: '1.6' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <strong style={{ color: comp.status === 'resolved' ? '#10b981' : '#ef4444' }}>🚨 塞管通報</strong>
+                            <button onClick={() => openStreetView(comp.lat!, comp.lng!)} style={{ padding: '4px 8px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <MapPin size={12} /> 街景
+                            </button>
+                          </div>
+                          📍 {comp.address}<br />
+                          狀態：<strong>{comp.status === 'pending' ? '待處理' : comp.status === 'processing' ? '處理中' : '已解決'}</strong><br />
+                          👤 通報人：{comp.reporter_name}<br />
+                          <button onClick={() => startCompEditing(comp)} style={{ marginTop: '8px', width: '100%', padding: '4px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', fontSize: '0.8rem' }}>編輯案件</button>
+                        </div>
+                      </Popup>
+                    </CircleMarker>
+                  ) : null
+                ))}
+
+                {/* Search / Click Location Marker */}
+                {clickCoords && (
+                  <CircleMarker center={clickCoords} radius={8} pathOptions={{ color: '#ec4899', fillColor: '#f472b6', fillOpacity: 0.6 }}>
+                    <Popup>
+                      <div style={{ textAlign: 'center', padding: '8px' }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>選取位置</div>
+                        <button onClick={() => openStreetView(clickCoords[0], clickCoords[1])} style={{ padding: '8px 16px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '6px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', margin: '0 auto' }}>
+                          <MapPin size={16} /> 查看 Google 街景
+                        </button>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                )}
+
+                {/* Water Monitor Stations (水情監測站) */}
+                {showWaterMonitors && waterMonitors.map((wm: WaterMonitor) => (
+                  <CircleMarker
+                    key={`wm-${wm.id}`}
+                    center={[wm.lat, wm.lng]}
+                    radius={10}
+                    pathOptions={{ color: '#0369a1', fillColor: '#0ea5e9', fillOpacity: 0.9, weight: 2.5 }}
+                  >
+                    <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{wm.station_id}</span>
+                    </Tooltip>
+                    <Popup>
+                      <div style={{ minWidth: '220px', lineHeight: '1.9' }}>
+                        <strong style={{ color: '#0369a1', fontSize: '1rem' }}>💧 地方端監測站</strong><br />
+                        <span style={{ fontSize: '0.85rem', color: '#555' }}>{wm.station_id}</span><br />
+                        🏙️ 行政區：{wm.district}<br />
+                        🔩 人孔編號：{wm.manhole_no}<br />
+                        {wm.diameter && <span>⭕ 人孔直徑：{wm.diameter} cm<br /></span>}
+                        📍 位置：{wm.location}<br />
+                        <div style={{ marginTop: '8px' }}>
+                          <button
+                            onClick={() => openStreetView(wm.lat, wm.lng)}
+                            style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}
+                          >📷 Google 街景</button>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* WRA IoT River Stations */}
+                {showWaterMonitors && wraStations.map((s, i) => (
+                  <CircleMarker
+                    key={`wra-river-${i}`}
+                    center={[s.Latitude, s.Longtiude]}
+                    radius={10}
+                    pathOptions={{ color: '#1e40af', fillColor: '#3b82f6', fillOpacity: 1, weight: 3, dashArray: '5, 5' }}
+                  >
+                    <Popup maxWidth={300}>
+                      <div style={{ minWidth: '220px', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #e5e7eb', paddingBottom: '4px' }}>
+                          <strong style={{ color: '#1e40af', fontSize: '1rem' }}>🌊 WRA 河川監測</strong>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 6px', borderRadius: '4px' }}>實時數據</span>
+                        </div>
+                        📍 {s.Name}<br />
+                        🏠 {s.CountyName} {s.TownName}<br />
+                        {s.Measurements?.map((m: any, j: number) => (
+                          <div key={j} style={{ marginTop: '8px', backgroundColor: '#f8fafc', padding: '8px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                              <span style={{ fontWeight: 'bold', color: '#334155' }}>{m.Name}</span>
+                              <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>{m.Value} <small style={{ fontSize: '0.8rem', fontWeight: '400' }}>{m.SIUnit}</small></span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Clock size={10} /> {new Date(m.TimeStamp).toLocaleString('zh-TW')}
+                            </div>
+                          </div>
+                        ))}
+                        <div style={{ marginTop: '10px', fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                          數據來源：經濟部水利署水資源物聯網
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* WRA IoT Inundation Stations */}
+                {showWaterMonitors && wraInundation.map((s, i) => (
+                  <CircleMarker
+                    key={`wra-flood-${i}`}
+                    center={[s.Latitude, s.Longtiude]}
+                    radius={10}
+                    pathOptions={{ color: '#991b1b', fillColor: '#ef4444', fillOpacity: 0.9, weight: 3 }}
+                  >
+                    <Popup maxWidth={280}>
+                      <div style={{ minWidth: '220px', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #fee2e2', paddingBottom: '4px' }}>
+                          <strong style={{ color: '#991b1b', fontSize: '1rem' }}>🚨 WRA 路面淹水</strong>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#fee2e2', color: '#991b1b', padding: '2px 6px', borderRadius: '4px' }}>感測器</span>
+                        </div>
+                        📍 {s.Name}<br />
+                        🏠 {s.CountyName} {s.TownName}<br />
+                        {s.Measurements?.map((m: any, j: number) => (
+                          <div key={j} style={{ marginTop: '8px', backgroundColor: '#fef2f2', padding: '8px', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                              <span style={{ fontWeight: 'bold', color: '#7f1d1d' }}>{m.Name}</span>
+                              <span style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{m.Value} <small style={{ fontSize: '0.8rem', fontWeight: '400' }}>{m.SIUnit}</small></span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: '#991b1b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Clock size={10} /> {new Date(m.TimeStamp).toLocaleString('zh-TW')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* Colife CCTV Stations */}
+                {showCctv && wraCctv.map((s, i) => (
+                  <CircleMarker
+                    key={`colife-cctv-${i}`}
+                    center={[s.Latitude, s.Longtiude]}
+                    radius={8}
+                    pathOptions={{ color: '#92400e', fillColor: '#fbbf24', fillOpacity: 0.8, weight: 2 }}
+                  >
+                    <Popup maxWidth={340}>
+                      <div style={{ minWidth: '260px', lineHeight: '1.7', fontSize: '0.9rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #fef3c7', paddingBottom: '4px' }}>
+                          <strong style={{ color: '#92400e', fontSize: '1rem' }}>📷 CCTV 影像監視</strong>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: '4px' }}>即時影像</span>
+                        </div>
+                        📍 {s.Name}<br />
+                        🏛️ {s.Authority} | {s.CountyName} {s.TownName}<br />
+                        
+                        <div style={{ marginTop: '10px', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <img 
+                            src={s.StreamUrl}
+                            style={{ width: '100%', height: 'auto', display: 'block', maxHeight: '200px', objectFit: 'contain' }}
+                            alt="CCTV"
+                            onError={(e) => { e.currentTarget.src = 'https://images.wra.gov.tw/NoImage.jpg'; }}
+                          />
+                        </div>
+                        <div style={{ marginTop: '6px', textAlign: 'center' }}>
+                          <a 
+                            href={s.StreamUrl}
+                            target="_blank" 
+                            rel="noreferrer"
+                            style={{ color: '#d97706', fontSize: '0.8rem', textDecoration: 'underline' }}
+                          >
+                            🔗 開啟原始影像連結
+                          </a>
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                ))}
+
+                {/* Inspection Sites (訪評受評地點) */}
+                {showInspectionSites && inspectionSites.map((site: InspectionSite) => {
+                  const isFacility = site.site_type === 'facility';
+                  const color = isFacility ? '#be185d' : '#7c3aed';
+                  const fillColor = isFacility ? '#ec4899' : '#a855f7';
+                  return (
+                    <CircleMarker
+                      key={`insp-${site.id}`}
+                      center={[site.lat, site.lng]}
+                      radius={isFacility ? 12 : 9}
+                      pathOptions={{ color, fillColor, fillOpacity: 0.9, weight: 2.5 }}
+                    >
+                      <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                          {isFacility ? '🏛️' : '🔩'} {site.name}
+                        </span>
+                      </Tooltip>
+                      <Popup>
+                        <div style={{ minWidth: '220px', lineHeight: '1.9' }}>
+                          <strong style={{ color, fontSize: '1rem' }}>
+                            {isFacility ? '🏛️ 訪評設施' : '🔩 訪評人孔'} 【{site.year}年】
+                          </strong><br />
+                          <strong>{site.name}</strong><br />
+                          🏙️ 行政區：{site.district}<br />
+                          📍 地址：{site.address}<br />
+                          {site.depth != null && <span>📏 人孔深度：{site.depth} m<br /></span>}
+                          <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>項次 {site.seq}</span>
+                          <div style={{ marginTop: '8px' }}>
+                            <button
+                              onClick={() => openStreetView(site.lat, site.lng)}
+                              style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}
+                            >📷 Google 街景</button>
+                          </div>
+                        </div>
+                      </Popup>
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 水資源銀行節點 (Water Bank Nodes) */}
+                {showWaterBank && waterBankNodes.map((node: WaterBankNode) => {
+                  const priorityColors: Record<number, { border: string; fill: string }> = {
+                    3: { border: '#064e3b', fill: '#10b981' },
+                    2: { border: '#047857', fill: '#34d399' },
+                    1: { border: '#059669', fill: '#6ee7b7' },
+                  };
+                  const colors = priorityColors[node.priority] || priorityColors[2];
+                  // Circle size driven by total_capacity_m3
+                  const radius = 8 + node.total_capacity_m3 / 120;
+                  const stars = '★'.repeat(node.priority);
+                  // Gauge bar: proportion already covered vs recommended add
+                  const existPct = node.total_capacity_m3 > 0 ? Math.round((node.existing_storage_m3 / node.total_capacity_m3) * 100) : 0;
+                  return (
+                    <CircleMarker
+                      key={`wb-${node.id}`}
+                      center={[node.lat, node.lng]}
+                      radius={radius}
+                      pathOptions={{ color: colors.border, fillColor: colors.fill, fillOpacity: 0.72, weight: 2.5, dashArray: node.existing_households > 0 ? '' : '5,4' }}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '250px', lineHeight: '1.85', fontFamily: 'sans-serif' }}>
+                          <strong style={{ color: '#064e3b', fontSize: '1rem' }}>🏦 {node.segment} 水資源節點</strong><br />
+                          🏙️ {node.town}　{node.village && <span style={{ fontSize: '0.82rem', color: '#6b7280' }}>{node.village}</span>}<br />
+                          <div style={{ margin: '6px 0 4px', borderTop: '1px solid #d1fae5', paddingTop: '4px' }}>
+                            <span style={{ fontWeight: 600, color: '#065f46' }}>現有建案蓄水</span><br />
+                            🏗️ 建案數：{node.existing_buildings} 件　👥 戶數：{node.existing_households} 戶<br />
+                            💧 現有7日儲水：<strong style={{ color: '#059669' }}>{node.existing_storage_m3} m³</strong>
+                          </div>
+                          <div style={{ margin: '6px 0 4px', borderTop: '1px solid #d1fae5', paddingTop: '4px' }}>
+                            <span style={{ fontWeight: 600, color: '#065f46' }}>建議增設空地蓄水</span><br />
+                            ➕ 建議增設：<strong style={{ color: '#b45309' }}>{node.recommended_add_m3} m³</strong><br />
+                            🎯 節點總容量：<strong style={{ color: '#064e3b', fontSize: '1.05rem' }}>{node.total_capacity_m3} m³</strong>
+                          </div>
+                          {/* Capacity bar */}
+                          <div style={{ margin: '6px 0', background: '#d1fae5', borderRadius: '6px', height: '10px', overflow: 'hidden' }}>
+                            <div style={{ width: `${existPct}%`, background: '#059669', height: '100%', borderRadius: '6px' }} />
+                          </div>
+                          <div style={{ fontSize: '0.76rem', color: '#6b7280', marginBottom: '4px' }}>
+                            現有建案已覆蓋 {existPct}%，空地補充 {100 - existPct}%
+                          </div>
+                          <div style={{ borderTop: '1px solid #d1fae5', paddingTop: '4px' }}>
+                            🏛️ 土地狀態：{node.land_status}<br />
+                            🏗️ 建議型態：{node.node_type}<br />
+                            ⭐ 優先等級：<strong>{stars}</strong>
+                          </div>
+                          <div style={{ marginTop: '8px' }}>
+                            <button onClick={() => openStreetView(node.lat, node.lng)} style={{ padding: '5px 12px', backgroundColor: '#4285f4', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.8rem', cursor: 'pointer', width: '100%' }}>
+                              📷 Google 街景確認地點
+                            </button>
+                          </div>
+                        </div>
+                      </Popup>
+                      <Tooltip>🏦 {node.segment}｜總容量 {node.total_capacity_m3}m³（現有{node.existing_storage_m3}＋增設{node.recommended_add_m3}）</Tooltip>
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* 🌊 潮汐倒灌預警 (Tidal Backflow Risk) */}
+                {showTidalRisk && tidalRiskData && tidalRiskData.assessments.map((assessment: TidalRiskAssessment) => {
+                  const riskColors = {
+                    red: { circle: '#dc2626', label: '🔴 危急', bg: '#fee2e2' },
+                    yellow: { circle: '#f59e0b', label: '🟡 警告', bg: '#fef3c7' },
+                    green: { circle: '#10b981', label: '🟢 正常', bg: '#ecfdf5' },
+                  };
+                  
+                  // 預測模式下的顏色
+                  const predColors = {
+                    high: { circle: '#7c3aed', label: '🔮 預測危急', bg: '#f3e8ff' },
+                    medium: { circle: '#a855f7', label: '🔮 預測警告', bg: '#faf5ff' },
+                    low: { circle: '#10b981', label: '🟢 預測正常', bg: '#ecfdf5' },
+                  };
+
+                  const currentRisk = riskColors[assessment.riskLevel];
+                  const predRisk = predColors[assessment.predictiveRisk];
+                  
+                  const activeRisk = showPredictive ? predRisk : currentRisk;
+                  const radius = (showPredictive ? (assessment.predictiveRisk === 'high' ? 14 : 10) : (assessment.riskLevel === 'red' ? 12 : 9));
+
+                  return (
+                    <CircleMarker
+                      key={`tidal-${assessment.outletId}`}
+                      center={[assessment.lat, assessment.lng]}
+                      radius={radius}
+                      pathOptions={{ 
+                        color: activeRisk.circle, 
+                        fillColor: activeRisk.circle, 
+                        fillOpacity: showPredictive ? 0.8 : 0.65, 
+                        weight: 2.5,
+                        dashArray: showPredictive ? '5,5' : '' 
+                      }}
+                    >
+                      <Popup>
+                        <div style={{ minWidth: '300px', lineHeight: '1.8', fontFamily: 'sans-serif' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                            <strong style={{ color: activeRisk.circle, fontSize: '1.1rem' }}>
+                              {showPredictive ? '🔮 2h 預測：' : ''}{activeRisk.label}
+                            </strong>
+                            <span style={{ fontSize: '0.75rem', backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>{assessment.location}</span>
+                          </div>
+
+                          {showPredictive ? (
+                            <div style={{ backgroundColor: '#f3e8ff', padding: '10px', borderRadius: '8px', border: '1px solid #c084fc', marginBottom: '10px' }}>
+                              <strong style={{ color: '#7c3aed' }}>🔮 AI 預測分析 (未來 2 小時)</strong><br />
+                              <span style={{ fontSize: '0.9rem', color: '#1e293b' }}>{assessment.predictiveReason}</span><br />
+                              <div style={{ marginTop: '6px', fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+                                <span>🌊 預期潮位：<strong>{assessment.futureTidalHeight2h?.toFixed(2)}m</strong></span>
+                                <span>🌧️ 降雨機率：<strong>{assessment.futureRainProb}%</strong></span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ borderTop: '1px solid #d1d5db', margin: '6px 0', paddingTop: '6px' }}>
+                              <strong style={{ color: '#4b5563' }}>⏱️ 當前觀測</strong><br />
+                              當前潮位：<strong style={{ color: activeRisk.circle }}>{assessment.currentTidalHeight.toFixed(2)} m</strong> ({assessment.trend === 'rising' ? '🔼 漲潮' : assessment.trend === 'falling' ? '🔽 退潮' : '➡️ 靜止'})<br />
+                              過去1hr雨量：{assessment.currentRainfall1hr.toFixed(1)} mm
+                            </div>
+                          )}
+
+                          <div style={{ borderTop: '1px solid #d1d5db', margin: '6px 0', paddingTop: '6px', backgroundColor: activeRisk.bg, padding: '8px', borderRadius: '4px' }}>
+                            <strong style={{ color: activeRisk.circle }}>{showPredictive ? '預測建議措施' : '當前建議措施'}</strong><br />
+                            <span style={{ fontSize: '0.88rem' }}>{showPredictive ? (assessment.predictiveRisk === 'high' ? '建議提前啟動抽水站並通知巡查組人員待命' : '維持例行監控') : assessment.recommendedAction}</span>
+                          </div>
+
+                          <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '6px', textAlign: 'right' }}>
+                            🕐 更新：{new Date(assessment.assessedAt).toLocaleTimeString('zh-TW')}
+                          </div>
+                        </div>
+                      </Popup>
+                      <Tooltip permanent={showPredictive && assessment.predictiveRisk === 'high'}>
+                        {showPredictive ? `🔮 預測: ${assessment.predictiveRisk === 'high' ? '危急' : '穩定'}` : `${assessment.location}: ${assessment.riskLevel}`}
+                      </Tooltip>
+                    </CircleMarker>
+                  );
+                })}
+
+                {/* GPS location marker */}
+                {gpsLocation && (
+                  <CircleMarker center={gpsLocation} radius={10}
+                    pathOptions={{ color: '#1d4ed8', fillColor: '#3b82f6', fillOpacity: 0.85, weight: 3 }}>
+                    <Popup>
+                      <div style={{ textAlign: 'center', padding: '6px' }}>
+                        <div style={{ fontWeight: 'bold' }}>📍 您目前的位置</div>
+                        <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '4px' }}>
+                          {gpsLocation[0].toFixed(5)}, {gpsLocation[1].toFixed(5)}
+                        </div>
+                      </div>
+                    </Popup>
+                  </CircleMarker>
+                )}
+
+                <MapClickHandler onClick={(ll) => { setClickCoords([ll.lat, ll.lng]); setMapCenter([ll.lat, ll.lng]); }} />
+              </MapContainer>
+            </div>
+
+            {/* Street View Side Panel — shows for ANY openStreetView call, not only selectedAsset */}
+            {showStreetView && streetViewCoords && (
+              <div 
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  position: 'fixed', bottom: '20px', right: '20px',
+                  width: '450px', height: '380px',
+                  backgroundColor: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)',
+                  zIndex: 4100, display: 'flex', flexDirection: 'column',
+                  borderRadius: '16px',
+                  boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(0,0,0,0.1)', overflow: 'hidden',
+                  animation: 'slideInRight 0.3s ease-out'
+                }}
+              >
+                {/* Header */}
+                <div style={{ padding: '14px 18px', backgroundColor: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {selectedAsset ? (
+                      <>
+                        <span style={{ backgroundColor: selectedAsset.type === 'manhole' ? '#8b5cf6' : '#3b82f6', color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                          {selectedAsset.type === 'manhole' ? (selectedAsset.data.manhole_type === '集水井' ? '集水井' : '人孔') : '管線'}
+                        </span>
+                        <strong style={{ fontSize: '1rem', color: '#1e293b' }}>
+                          {selectedAsset.type === 'manhole' ? selectedAsset.data.manhole_no : selectedAsset.data.sewer_no}
+                        </strong>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ backgroundColor: '#059669', color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>📷 街景</span>
+                        <strong style={{ fontSize: '0.9rem', color: '#1e293b' }}>{streetViewCoords[0].toFixed(5)}, {streetViewCoords[1].toFixed(5)}</strong>
+                      </>
+                    )}
+                  </div>
+                  <button onClick={() => { setShowStreetView(false); setSelectedAsset(null); }} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><X size={22} /></button>
+                </div>
+                {/* Info — only when selectedAsset is set */}
+                {selectedAsset && (
+                  <div style={{ padding: '12px 18px', fontSize: '0.85rem', color: '#475569', borderBottom: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                    {selectedAsset.type === 'manhole' ? (<>
+                      <div>📍 {selectedAsset.data.location || '—'}</div>
+                      <div>🏗️ {selectedAsset.data.project_name || '—'}</div>
+                      <div>📏 深度：{selectedAsset.data.depth ? `${selectedAsset.data.depth} m` : '—'}</div>
+                      <div>🏷️ 型式：{selectedAsset.data.manhole_type || '—'}</div>
+                    </>) : (<>
+                      <div>🏗️ {selectedAsset.data.project_name || '—'}</div>
+                      <div>📏 管徑：{selectedAsset.data.diameter ? `${selectedAsset.data.diameter} mm` : '—'}</div>
+                      <div>🛣️ {materialLabel(selectedAsset.data.material)}</div>
+                      <div>📐 坡度：{selectedAsset.data.slope ? `${selectedAsset.data.slope} ‰` : '—'}</div>
+                    </>)}
+                  </div>
+                )}
+                {/* Street View iframe */}
+                <div style={{ flexGrow: 1, position: 'relative', backgroundColor: '#e2e8f0' }}>
+                  <iframe
+                    key={`sv-${streetViewCoords[0]}-${streetViewCoords[1]}`}
+                    width="100%" height="100%"
+                    style={{ border: 0 }}
+                    src={`https://maps.google.com/maps?layer=c&cbll=${streetViewCoords[0]},${streetViewCoords[1]}&cbp=11,0,0,0,0&output=svembed`}
+                    allowFullScreen title="Street View"
+                  />
+                  <button onClick={() => { const c = streetViewCoords; setStreetViewCoords(null); setTimeout(() => setStreetViewCoords(c), 50); }}
+                    style={{ position: 'absolute', top: '10px', right: '10px', padding: '4px 8px', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', border: 'none', borderRadius: '4px', fontSize: '0.7rem', cursor: 'pointer' }}>
+                    重新載入
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            <p style={{ marginTop: '10px', fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+              💡 點擊地圖任何位置可查看該處「Google 街景」。拖曳或縮放地圖後，管資將自動更新。
+            </p>
+            <SentimentPanel />
+          </div>
+        ) : (
+          <>
+            {/* Data Table */}
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>查詢中...</div>
+            ) : data.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>無符合條件的資料</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                {type === 'pipelines' ? (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: 'rgba(139,92,246,0.08)', borderBottom: '2px solid var(--glass-border)' }}>
+                        {['管線編號', '上游節點', '下游節點', '材質', '管徑(mm)', '長度(m)', '坡度(‰)', '工程名稱', '區域', '廠商'].map(h => (
+                          <th key={h} style={{ padding: '12px 10px', textAlign: 'left', color: '#8b5cf6', fontWeight: '600', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data as Pipeline[]).map((row, ri) => (
+                        <tr key={`pipe-${row.id ?? ri}`} style={{ borderBottom: '1px solid var(--glass-border)', transition: 'background-color 0.15s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(139,92,246,0.03)'} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                          <td style={{ padding: '10px', fontWeight: '500', color: 'var(--primary)' }}>{row.sewer_no}</td>
+                          <td style={{ padding: '10px' }}>{row.upstream_node}</td>
+                          <td style={{ padding: '10px' }}>{row.downstream_node}</td>
+                          <td style={{ padding: '10px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(139,92,246,0.1)', fontSize: '0.85rem' }}>{materialLabel(row.material)}</span></td>
+                          <td style={{ padding: '10px' }}>{row.diameter}</td>
+                          <td style={{ padding: '10px' }}>{row.length?.toFixed(2)}</td>
+                          <td style={{ padding: '10px' }}>{row.slope?.toFixed(3)}</td>
+                          <td style={{ padding: '10px', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.project_name}>{row.project_name}</td>
+                          <td style={{ padding: '10px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(37,99,235,0.1)', color: 'var(--primary)', fontSize: '0.85rem' }}>{row.area}</span></td>
+                          <td style={{ padding: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>{row.contractor}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: 'rgba(139,92,246,0.08)', borderBottom: '2px solid var(--glass-border)' }}>
+                        {['人孔編號', 'X座標', 'Y座標', '型式', '位置', '地面高程', '深度(m)', '工程名稱', '區域', '廠商'].map(h => (
+                          <th key={h} style={{ padding: '12px 10px', textAlign: 'left', color: '#8b5cf6', fontWeight: '600', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data as Manhole[]).map((row, ri) => (
+                        <tr key={`mhr-${row.id ?? ri}`} style={{ borderBottom: '1px solid var(--glass-border)', transition: 'background-color 0.15s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(139,92,246,0.03)'} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                          <td style={{ padding: '10px', fontWeight: '500', color: 'var(--primary)' }}>{row.manhole_no}</td>
+                          <td style={{ padding: '10px' }}>{row.x?.toFixed(2)}</td>
+                          <td style={{ padding: '10px' }}>{row.y?.toFixed(2)}</td>
+                          <td style={{ padding: '10px' }}>{row.manhole_type}</td>
+                          <td style={{ padding: '10px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.location}>{row.location}</td>
+                          <td style={{ padding: '10px' }}>{row.ground_level?.toFixed(2)}</td>
+                          <td style={{ padding: '10px' }}>{row.depth?.toFixed(2)}</td>
+                          <td style={{ padding: '10px', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.project_name}>{row.project_name}</td>
+                          <td style={{ padding: '10px' }}><span style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(37,99,235,0.1)', color: 'var(--primary)', fontSize: '0.85rem' }}>{row.area}</span></td>
+                          <td style={{ padding: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>{row.contractor}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', marginTop: '24px', padding: '16px 0', borderTop: '1px solid var(--glass-border)' }}>
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', backgroundColor: page === 1 ? 'transparent' : 'var(--bg-color)', color: page === 1 ? 'var(--text-muted)' : 'var(--text-main)', cursor: page === 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <ChevronLeft size={16} /> 上一頁
+                </button>
+                <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>
+                  第 <strong style={{ color: 'var(--text-main)' }}>{page}</strong> / {totalPages} 頁
+                </span>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', backgroundColor: page === totalPages ? 'transparent' : 'var(--bg-color)', color: page === totalPages ? 'var(--text-muted)' : 'var(--text-main)', cursor: page === totalPages ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  下一頁 <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </main>
+    </>
+  );
+}

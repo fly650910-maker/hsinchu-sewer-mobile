@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         [`%${q}%`]
       );
 
-      localMatches = rawLocalMatches.map(m => {
+      localMatches = rawLocalMatches.map((m: any) => {
         const [lat, lng] = twd97ToWgs84(m.x, m.y);
         return { title: m.title, lat, lng, type: 'asset' };
       });

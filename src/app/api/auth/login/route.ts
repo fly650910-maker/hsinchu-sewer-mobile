@@ -15,7 +15,6 @@ function parseAccounts(): Map<string, string> {
   }
   if (accounts.size === 0) {
     const legacyPass = process.env.GIS_PASSWORD || 'hchg2620';
-    accounts.set('gis', legacyPass);
     accounts.set('admin', legacyPass);
     // Also allow any username with the legacy password
     accounts.set('__any__', legacyPass);

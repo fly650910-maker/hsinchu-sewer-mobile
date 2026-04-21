@@ -134,17 +134,32 @@ export async function GET() {
       await db.all('SELECT town, SUM(has_sedimentation) as sed, SUM(has_damage) as dmg, AVG(max_grade) as avg_grade FROM pipeline_conditions GROUP BY town')
     for (const r of sedRows) sedByTown[r.town] = { sed: r.sed, dmg: r.dmg, avg_grade: r.avg_grade }
 
-    // ── 4. Pipe network segments with GPS (pipelines JOIN manholes_unique) ──
-    // Each row = one pipe segment with upstream/downstream manhole WGS84 coords.
-    // Used to generate straight-line pipe-network polylines for 竹北 / 竹東 areas.
-    const pipeSegs: Array<{ up_lat: number; up_lng: number; dn_lat: number; dn_lng: number }> =
-      await db.all(`
-        SELECT mu.lat_wgs84 AS up_lat, mu.lng_wgs84 AS up_lng,
-               md.lat_wgs84 AS dn_lat, md.lng_wgs84 AS dn_lng
-        FROM   pipelines p
-        JOIN   manholes_unique mu ON mu.manhole_no = p.upstream_node   AND mu.lat_wgs84 IS NOT NULL
-        JOIN   manholes_unique md ON md.manhole_no = p.downstream_node AND md.lat_wgs84 IS NOT NULL
-      `)
+    // ── 4. Pipe network segments with GPS ──
+    // 直接從 pipelines_unique.wgs84_coords 取首尾座標當端點。
+    // 註:本資料庫 manholes_unique 只有 TWD97 x/y,沒有 lat_wgs84/lng_wgs84,
+    //     因此改走 pipelines_unique 自帶的 WGS84 coords(與 /api/gis/map-data 新式路徑一致)
+    const pipesRaw: Array<{ wgs84_coords: string }> = await db.all(`
+      SELECT wgs84_coords
+      FROM   pipelines_unique
+      WHERE  wgs84_coords IS NOT NULL
+        AND  wgs84_coords != ''
+        AND  wgs84_coords LIKE '[[%'
+    `)
+    const pipeSegs: Array<{ up_lat: number; up_lng: number; dn_lat: number; dn_lng: number }> = []
+    for (const p of pipesRaw) {
+      try {
+        const coords: [number, number][] = JSON.parse(p.wgs84_coords)
+        if (!Array.isArray(coords) || coords.length < 2) continue
+        const [up_lat, up_lng] = coords[0]
+        const [dn_lat, dn_lng] = coords[coords.length - 1]
+        if (
+          typeof up_lat === 'number' && typeof up_lng === 'number' &&
+          typeof dn_lat === 'number' && typeof dn_lng === 'number'
+        ) {
+          pipeSegs.push({ up_lat, up_lng, dn_lat, dn_lng })
+        }
+      } catch { /* 忽略壞掉的 JSON */ }
+    }
 
     // ── 5. Build candidate route plan (data-driven) ──
     // Each candidate encodes: which data sources drove it, expected polyline anchor, culvert type
@@ -168,16 +183,16 @@ export async function GET() {
 
     // ── 依照資料分析的具體路段建議 ──
     //
-    // 竹東 (最大空缺：72條淤積，113/114年僅清38m)
-    // pipe_reports 顯示：大同路、康寧街、光武街、沿河街有多筆通報
+    // 竹東 (最大空缺:72條淤積,113/114年僅清38m)
+    // pipe_reports 顯示:大同路、康寧街、光武街、沿河街有多筆通報
     const zhudongSed = sedByTown['竹東'] ?? { sed: 72, dmg: 77, avg_grade: 0.98 }
     const zhudongPastM = dredgingByDistrict['竹東']?.total_m ?? 38
     candidates.push({
       id: 'zd-01', district: '竹東', road_name: '竹東-大同路暨公正街排水箱涵',
       culvert_type: '箱涵', estimated_length_m: 780, manhole_count: 8,
-      lat: 24.7356, lng: 121.0890, bearing: 5,  // 依管線資料校正（南北向）
+      lat: 24.7356, lng: 121.0890, bearing: 5,  // 依管線資料校正(南北向)
       priority: 'high', score: 92,
-      reason: `竹東鎮${zhudongSed.sed}條管線有淤積紀錄(等級${zhudongSed.avg_grade.toFixed(2)})，歷年清淤僅${Math.round(zhudongPastM)}m，大同路為竹東主要排水幹線，沿線多筆塞管及冒水通報`,
+      reason: `竹東鎮${zhudongSed.sed}條管線有淤積紀錄(等級${zhudongSed.avg_grade.toFixed(2)}),歷年清淤僅${Math.round(zhudongPastM)}m,大同路為竹東主要排水幹線,沿線多筆塞管及冒水通報`,
       basis: ['管線淤積', '塞管通報']
     })
     candidates.push({
@@ -185,7 +200,7 @@ export async function GET() {
       culvert_type: '涵管', estimated_length_m: 650, manhole_count: 6,
       lat: 24.7335, lng: 121.0883, bearing: 90,
       priority: 'high', score: 88,
-      reason: '康寧街249巷多次重複通報塞管，沿線Ø600mm涵管調查顯示多處淤積，管齡超15年，排水坡度不足',
+      reason: '康寧街249巷多次重複通報塞管,沿線Ø600mm涵管調查顯示多處淤積,管齡超15年,排水坡度不足',
       basis: ['塞管通報', '管線淤積']
     })
     candidates.push({
@@ -193,7 +208,7 @@ export async function GET() {
       culvert_type: '箱涵', estimated_length_m: 900, manhole_count: 10,
       lat: 24.7432, lng: 121.0872, bearing: 35,
       priority: 'high', score: 85,
-      reason: '竹東沿河街緊鄰頭前溪，颱風季排水箱涵承載高，近年通報積水及冒水，且已無113/114清淤紀錄',
+      reason: '竹東沿河街緊鄰頭前溪,颱風季排水箱涵承載高,近年通報積水及冒水,且已無113/114清淤紀錄',
       basis: ['塞管通報', '管線淤積']
     })
     candidates.push({
@@ -201,26 +216,26 @@ export async function GET() {
       culvert_type: '箱涵', estimated_length_m: 1_100, manhole_count: 12,
       lat: 24.7290, lng: 121.0920, bearing: 10,
       priority: 'medium', score: 72,
-      reason: '竹東舊市區光復路為主要南北排水走廊，管線調查顯示淤積段落集中，建議配合光復路拓寬計畫一併辦理',
+      reason: '竹東舊市區光復路為主要南北排水走廊,管線調查顯示淤積段落集中,建議配合光復路拓寬計畫一併辦理',
       basis: ['管線淤積']
     })
 
-    // 湖口/新豐/新埔/橫山 — 無管線 GPS 資料（不在下水道服務範圍/都市計畫範圍），全數移除
+    // 湖口/新豐/新埔/橫山 — 無管線 GPS 資料(不在下水道服務範圍/都市計畫範圍),全數移除
 
-    // 竹北 — 重點針對未涵蓋區域（六家、嘉豐）
+    // 竹北 — 重點針對未涵蓋區域(六家、嘉豐)
     const zhubeiHotspots = hotspots.filter(h => h.town === '竹北市')
     // Find hotspots far from existing dredging
     const zhubeiUnreached = zhubeiHotspots.filter(h => {
       const minDist = Math.min(...dredgedAllPts.map((d: any) => haversine(h.lat, h.lng, d.lat, d.lng)))
       return minDist > 600
     })
-    // zb-01 新港里已移除：距最近管線 GPS 超過 5.5km，該區尚無下水道施設資料
+    // zb-01 新港里已移除:距最近管線 GPS 超過 5.5km,該區尚無下水道施設資料
     candidates.push({
       id: 'zb-02', district: '竹北', road_name: '竹北-嘉豐地區雨水主幹管',
       culvert_type: '箱涵', estimated_length_m: 1_200, manhole_count: 13,
       lat: 24.8102, lng: 121.0340, bearing: 15,
       priority: 'high', score: 87,
-      reason: '嘉豐地區115年已累積多筆塞管通報（嘉豐五路、嘉豐十一路等），為新開發區快速成長帶，排水系統負荷遽增',
+      reason: '嘉豐地區115年已累積多筆塞管通報(嘉豐五路、嘉豐十一路等),為新開發區快速成長帶,排水系統負荷遽增',
       basis: ['塞管通報', '管線淤積']
     })
     candidates.push({
@@ -228,7 +243,7 @@ export async function GET() {
       culvert_type: '箱涵', estimated_length_m: 700, manhole_count: 8,
       lat: 24.8397, lng: 121.0113, bearing: 125,  // 依管線資料校正
       priority: 'high', score: 85,
-      reason: '中和街地下道累積3次淹水事件，排水箱涵截面積不足，上游淤積加重下游壓力，建議清淤並評估是否擴管',
+      reason: '中和街地下道累積3次淹水事件,排水箱涵截面積不足,上游淤積加重下游壓力,建議清淤並評估是否擴管',
       basis: ['淹水熱點']
     })
     candidates.push({
@@ -236,7 +251,7 @@ export async function GET() {
       culvert_type: '涵管', estimated_length_m: 680, manhole_count: 7,
       lat: 24.8295, lng: 121.0101, bearing: 130,
       priority: 'medium', score: 74,
-      reason: '光明路縣政路口115年已有多筆冒水及塞管通報，Ø600mm涵管配合排水坡度不足，建議清淤改善',
+      reason: '光明路縣政路口115年已有多筆冒水及塞管通報,Ø600mm涵管配合排水坡度不足,建議清淤改善',
       basis: ['塞管通報']
     })
     candidates.push({
@@ -244,7 +259,7 @@ export async function GET() {
       culvert_type: '箱涵', estimated_length_m: 900, manhole_count: 9,
       lat: 24.8083, lng: 121.0302, bearing: 180,
       priority: 'medium', score: 70,
-      reason: '六家地區快速開發，六家一路排水承接上游大量逕流，管線調查顯示淤積段落，需在雨季前完成清淤',
+      reason: '六家地區快速開發,六家一路排水承接上游大量逕流,管線調查顯示淤積段落,需在雨季前完成清淤',
       basis: ['塞管通報', '管線淤積']
     })
 
@@ -277,7 +292,7 @@ export async function GET() {
         unit_cost: unitCost,
         total_cost: Math.round((totalCost + contingency) / 10000), // 萬元
         cumulative_cost: Math.round(budgetUsed / 10000),
-        // 使用真實管線網路座標（每段為直線），無網路資料時回退至合成折線
+        // 使用真實管線網路座標(每段為直線),無網路資料時回退至合成折線
         polyline: pipeNetworkPolyline(c.lat, c.lng, c.estimated_length_m, c.bearing, pipeSegs),
       })
     }

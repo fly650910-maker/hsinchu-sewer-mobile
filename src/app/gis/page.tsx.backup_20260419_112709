@@ -6,7 +6,6 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link';
 import { ArrowLeft, Database, Search, ChevronLeft, ChevronRight, Map, Layers, MessageSquareWarning, Plus, Trash2, CheckCircle, CheckCircle2, CircleDot, Clock, MapPin, X, Download, ShieldAlert, Briefcase, Wrench, Home, Waves, GitBranch, Cloud, AlertTriangle, Activity } from 'lucide-react';
 import { mapToEmicStatus } from '@/lib/cwa';
-import InfoPanel from '@/components/gis/InfoPanel';
 
 interface Pipeline {
   id: number; sewer_no: string; upstream_node: string; downstream_node: string;
@@ -196,8 +195,7 @@ const ClosePopupBtnInner = loadDynamic(
       const map = useMap();
       return (
         <button
-          onClick={(e) =>
-       { e.stopPropagation(); map.closePopup(); }}
+          onClick={(e) => { e.stopPropagation(); map.closePopup(); }}
           title="關閉"
           style={{ position: 'absolute', top: '6px', right: '6px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', color: '#64748b', zIndex: 10, lineHeight: 1, padding: 0 }}
         >✕</button>
@@ -231,7 +229,6 @@ function SentimentPanel({ showNewsPanel, showFloodNews, showFloodOpinion, isFetc
       borderRadius: '16px', boxShadow: '0 8px 40px rgba(0,0,0,0.18)', zIndex: 9000, overflowY: 'auto',
       display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
     }}>
-    <InfoPanel />
       <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(0,0,0,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(to bottom, rgba(0,0,0,0.02), transparent)' }}>
         <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)' }}>
           {panelTitle}
@@ -483,6 +480,7 @@ export default function GisQueryPage() {
       setIsFetchingSentiment(false);
     }
   };
+
 
   interface TidalRiskAssessment {
     outletId: number;
@@ -1086,7 +1084,7 @@ export default function GisQueryPage() {
       if (wraStations.length === 0) fetchWaterMonitors();
     } else if (alert.layerKey === 'floods') {
       setShowFloodHotspots(true); setShowFloodNews(true);
-      if (showFloodHotspots.length === 0) fetchFloodHotspots();
+      if (floodHotspots.length === 0) fetchFloodHotspots();
     } else if (alert.layerKey === 'tidalrisk') {
       setShowTidalRisk(true);
     }
@@ -1099,7 +1097,7 @@ export default function GisQueryPage() {
 
   const fetchPipeReports = useCallback(async (type: string = 'all') => {
     try {
-      const res = await fetch(`/api/gis/pipe-showHistoryReports?type=${encodeURIComponent(type)}`);
+      const res = await fetch(`/api/gis/pipe-reports?type=${encodeURIComponent(type)}`);
       if (res.ok) {
         const d = await res.json();
         setPipeReports(d.reports || []);
@@ -1109,7 +1107,7 @@ export default function GisQueryPage() {
 
   const fetchPipeReportsByYear = useCallback(async (year: string, setter: (r: PipeReport[]) => void) => {
     try {
-      const res = await fetch(`/api/gis/pipe-showHistoryReports?year=${year}`);
+      const res = await fetch(`/api/gis/pipe-reports?year=${year}`);
       if (res.ok) {
         const d = await res.json();
         setter(d.reports || []);
@@ -1490,12 +1488,13 @@ export default function GisQueryPage() {
     return map[m] || m;
   };
 
+
   // 淹水熱區圓點 — 以 useMemo 隔離，避免每秒時鐘更新導致 pathOptions 重建而關閉彈窗
   // 必須在所有早返（early return）之前呼叫，符合 Rules of Hooks
   const floodHotspotMarkers = useMemo(() => {
     if (!showFloodNews && !showFloodOpinion) return null;
     const isOpinionOnly = showFloodOpinion && !showFloodNews;
-    return showFloodHotspots.map((hs: FloodHotspot) => {
+    return floodHotspots.map((hs: FloodHotspot) => {
       const radius = Math.min(8 + hs.event_count * 4, 28);
       const opacity = Math.min(0.45 + hs.event_count * 0.08, 0.75);
       return (
@@ -1523,95 +1522,9 @@ export default function GisQueryPage() {
         </CircleMarker>
       );
     });
-  }, [showFloodHotspots, showFloodNews, showFloodOpinion, openStreetView]);
+  }, [floodHotspots, showFloodNews, showFloodOpinion, openStreetView]);
 
-  if (!isMounted) return <div style={{ padding: '40px', textAlign: 'center' }}>載入中...
-            {/* ═══ 視窗內統計 ═══ */}
-            <div style={{ padding: '14px 16px 12px', borderTop: '1px solid #EFF2F6', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-                📊 視窗內統計
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <div style={{ padding: '10px 12px', background: '#F8FAFC', border: '1px solid #EFF2F6', borderRadius: 8 }}>
-                  <div><span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 22, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.03em', lineHeight: 1 }}>{mapManholes?.length ?? 0}</span><span style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}>座</span></div>
-                  <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#8B5CF6' }}></span>人孔</div>
-                </div>
-                <div style={{ padding: '10px 12px', background: '#F8FAFC', border: '1px solid #EFF2F6', borderRadius: 8 }}>
-                  <div><span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 22, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.03em', lineHeight: 1 }}>{mapPipelines?.length ?? 0}</span><span style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}>段</span></div>
-                  <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3B82F6' }}></span>管線</div>
-                </div>
-                <div style={{ padding: '10px 12px', background: '#F8FAFC', border: '1px solid #EFF2F6', borderRadius: 8 }}>
-                  <div><span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 22, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.03em', lineHeight: 1 }}>{floodHotspots?.length ?? 0}</span><span style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}>處</span></div>
-                  <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F59E0B' }}></span>淹水熱區</div>
-                </div>
-                <div style={{ padding: '10px 12px', background: '#F8FAFC', border: '1px solid #EFF2F6', borderRadius: 8 }}>
-                  <div><span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 22, fontWeight: 700, color: '#F59E0B', letterSpacing: '-0.03em', lineHeight: 1 }}>{pipeReports?.filter((r: any) => r.status === '待處理' || r.status === 'pending').length ?? 0}</span><span style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}>筆</span></div>
-                  <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F59E0B' }}></span>待處理通報</div>
-                </div>
-              </div>
-            </div>
-
-            {/* ═══ 最近通報 ═══ */}
-            <div style={{ padding: '14px 16px 12px', borderTop: '1px solid #EFF2F6', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-                🔔 最近通報 · {pipeReports?.length?.toLocaleString() ?? 0} 筆
-              </div>
-              {[...(pipeReports || [])].sort((a: any, b: any) => (b.reported_at || '').localeCompare(a.reported_at || '')).slice(0, 5).map((r: any) => {
-                const isPending = r.status === '待處理' || r.status === 'pending';
-                const rc = isPending ? '#F59E0B' : '#10B981';
-                const rcBg = isPending ? '#FFFBEB' : '#F0FDF4';
-                return (
-                  <div key={r.id} style={{ padding: '9px 10px', borderLeft: `3px solid ${rc}`, background: rcBg, borderRadius: 6, marginBottom: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 3 }}>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{(r.description || '(無描述)').slice(0, 24)}</span>
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10, flexShrink: 0, background: rc, color: '#fff', opacity: isPending ? 1 : 0.75 }}>{isPending ? '待處理' : '已完成'}</span>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#475569', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 {(r.address || '-').slice(0, 22)}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: '#94A3B8' }}>
-                      <span>{r.reported_at ? r.reported_at.slice(5, 10).replace('-', '/') : '-'}</span>
-                      <span>#{r.id}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* ═══ 7 個月趨勢 ═══ */}
-            <div style={{ padding: '14px 16px 12px', borderTop: '1px solid #EFF2F6', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-                📈 7 個月趨勢
-              </div>
-              {(() => {
-                const mc: Record<string, number> = {};
-                (pipeReports || []).forEach((r: any) => {
-                  if (r.reported_at) {
-                    const ym = r.reported_at.slice(0, 7);
-                    mc[ym] = (mc[ym] || 0) + 1;
-                  }
-                });
-                const months = Object.keys(mc).sort();
-                const last7 = months.slice(-7);
-                const data = last7.map(m => ({ month: m, count: mc[m] }));
-                const maxC = Math.max(...data.map(d => d.count), 1);
-                return (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>
-                      <span style={{ color: '#475569', fontWeight: 500 }}>通報數 (最高 {maxC})</span>
-                      <span>總 {pipeReports?.length ?? 0}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 48, margin: '8px 0 4px' }}>
-                      {data.map(d => (
-                        <div key={d.month} style={{ flex: 1, background: d.count === maxC ? '#5E6AD2' : '#EEF0FE', borderRadius: '2px 2px 0 0', minHeight: 4, height: Math.max(4, (d.count / maxC) * 48) + 'px' }} title={d.month + ': ' + d.count + ' 筆'} />
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#94A3B8' }}>
-                      {data.map(d => <span key={d.month}>{d.month.slice(5)}</span>)}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>;
+  if (!isMounted) return <div style={{ padding: '40px', textAlign: 'center' }}>載入中...</div>;
 
   return (
     <>
@@ -1798,11 +1711,11 @@ export default function GisQueryPage() {
             type CardId = 'tidal' | 'flood' | 'water';
             let aiCard: CardId = 'water';
             if (alertCounts.red > 0) aiCard = 'tidal';
-            else if (highRainfall || showFloodHotspots.length > 2 || sentimentFlood >= 2) aiCard = 'flood';
+            else if (highRainfall || floodHotspots.length > 2 || sentimentFlood >= 2) aiCard = 'flood';
 
             const cards = [
               { id: 'tidal' as CardId, value: alertCounts.red, mainLabel: '潮汐倒灌', subLabel: '危急警告', color: '#dc2626', bg: 'linear-gradient(135deg,#fee2e2,#fecaca)', onClick: () => { setShowTidalRisk(true); } },
-              { id: 'flood' as CardId, value: showFloodHotspots.length, mainLabel: '淹水熱點', subLabel: '積淹水區域', color: '#f59e0b', bg: 'linear-gradient(135deg,#fef3c7,#fde68a)', onClick: () => { setShowFloodHotspots(true); setShowFloodNews(true); if (showFloodHotspots.length === 0) fetchFloodHotspots(); } },
+              { id: 'flood' as CardId, value: floodHotspots.length, mainLabel: '淹水熱點', subLabel: '積淹水區域', color: '#f59e0b', bg: 'linear-gradient(135deg,#fef3c7,#fde68a)', onClick: () => { setShowFloodHotspots(true); setShowFloodNews(true); if (floodHotspots.length === 0) fetchFloodHotspots(); } },
               { id: 'water' as CardId, value: wraStations.length, mainLabel: '河川水位', subLabel: 'WRA 監測站', color: '#0ea5e9', bg: 'linear-gradient(135deg,#e0f2fe,#bae6fd)', onClick: () => { setShowWaterMonitors(true); setShowWraStn(true); } },
             ];
             return (
@@ -2354,6 +2267,7 @@ export default function GisQueryPage() {
                 </div>
               )}
 
+
               {isFormOpen && (
                 <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                   <form onSubmit={handleCompSubmit} className="glass-panel" style={{ width: '100%', maxWidth: '500px', padding: '24px', position: 'relative' }}>
@@ -2435,6 +2349,7 @@ export default function GisQueryPage() {
                 </div>
               )}
 
+
               <MapContainer
                 center={mapCenter}
                 zoom={14}
@@ -2442,7 +2357,7 @@ export default function GisQueryPage() {
                 className={nightMode ? 'gis-night-map' : ''}
                 ref={mapRef}
               >
-{nightMode ? (
+                {nightMode ? (
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -3062,7 +2977,7 @@ export default function GisQueryPage() {
                   );
                 })}
 
-                {/* 115年建議清淤管段 — polylines + center marker by priority */}
+                {/* 115年建議清淤管段 — dashed polylines by priority */}
                 {showDredgingFuture && dredgingSuggestions.map((sg) => {
                   const priorityColor = sg.priority === 'high' ? '#ef4444' : sg.priority === 'medium' ? '#f97316' : '#eab308';
                   const priorityLabel = sg.priority === 'high' ? '高優先' : sg.priority === 'medium' ? '中優先' : '低優先';
@@ -3096,34 +3011,19 @@ export default function GisQueryPage() {
                       </div>
                     </Popup>
                   );
-                  const tooltip = (
-                    <Tooltip sticky direction="top" offset={[0, -10]}>
-                      <span style={{ fontWeight: 700, color: priorityColor }}>{sg.road_name}</span><br />
-                      <span style={{ fontSize: '0.78rem' }}>{sg.district} · {sg.culvert_type} · {sg.estimated_length_m}m · <strong>{sg.total_cost}萬</strong></span>
-                    </Tooltip>
-                  );
                   return (
-                    <React.Fragment key={`dsug-${sg.id}`}>
-                      {/* Polyline 路線（虛線，視覺上明顯） */}
-                      {sg.polyline && sg.polyline.length >= 2 && (
-                        <Polyline
-                          positions={sg.polyline as [number, number][]}
-                          pathOptions={{ color: priorityColor, weight: 5, opacity: 0.85, dashArray: '10, 6' }}
-                        >
-                          {popup}
-                          {tooltip}
-                        </Polyline>
-                      )}
-                      {/* 中心圓點（方便點擊，無 polyline 時仍可見） */}
-                      <CircleMarker
-                        center={[sg.lat, sg.lng]}
-                        radius={8}
-                        pathOptions={{ color: priorityColor, fillColor: priorityColor, fillOpacity: 0.9, weight: 2 }}
-                      >
-                        {popup}
-                        {tooltip}
-                      </CircleMarker>
-                    </React.Fragment>
+                    <CircleMarker
+                      key={`dsug-${sg.id}`}
+                      center={[sg.lat, sg.lng]}
+                      radius={12}
+                      pathOptions={{ color: priorityColor, fillColor: priorityColor, fillOpacity: 0.75, weight: 2.5 }}
+                    >
+                      {popup}
+                      <Tooltip sticky direction="top" offset={[0, -10]}>
+                        <span style={{ fontWeight: 700, color: priorityColor }}>{sg.road_name}</span><br />
+                        <span style={{ fontSize: '0.78rem' }}>{sg.district} · {sg.culvert_type} · {sg.estimated_length_m}m · <strong>{sg.total_cost}萬</strong></span>
+                      </Tooltip>
+                    </CircleMarker>
                   );
                 })}
 
@@ -3694,6 +3594,7 @@ export default function GisQueryPage() {
                 <MapClickHandler onClick={(ll) => { setClickCoords([ll.lat, ll.lng]); setMapCenter([ll.lat, ll.lng]); }} />
               </MapContainer>
 
+
             </div>
 
             {/* RIGHT PANEL - 現況看板 */}
@@ -3833,7 +3734,6 @@ export default function GisQueryPage() {
                 🔄 自動更新：5分鐘
               </div>
             </div>
-
           </div>
 
           {/* Weather Toggle + Panel */}
@@ -4056,6 +3956,7 @@ export default function GisQueryPage() {
               </div>
             )}
 
+
           {/* Street View Side Panel */}
             {showStreetView && streetViewCoords && (
               <div 
@@ -4128,6 +4029,7 @@ export default function GisQueryPage() {
                 </div>
               </div>
             )}
+
 
           <p style={{ marginTop: '8px', fontSize: '0.78rem', color: '#9ca3af', textAlign: 'center' }}>
             💡 點擊地圖任何位置可查看該處「Google 街景」
